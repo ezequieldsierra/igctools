@@ -5,6 +5,17 @@ app_description = "Tools for IGCARIBE"
 app_email = "esierra@gmail.com"
 app_license = "mit"
 
+
+# apps/igctools/igctools/hooks.py
+
+doc_events = {
+    "Project": {
+        "before_save": "igctools.api.printcard_svg.auto_svg_from_printcard"
+    }
+}
+
+
+
 # Apps
 # ------------------
 
