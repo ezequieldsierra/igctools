@@ -1,5 +1,6 @@
-# igctools/igctools/api/printcard_svg.py
+# apps/igctools/igctools/api/printcard_svg.py
 import frappe
+
 
 def _pdf_file_bytes_from_file_url(file_url: str) -> bytes:
     """Carga bytes del File dado su file_url (soporta público/privado)."""
@@ -9,6 +10,7 @@ def _pdf_file_bytes_from_file_url(file_url: str) -> bytes:
     content = file_doc.get_content()
     return content or b""
 
+
 def _pdf_first_page_to_svg(pdf_bytes: bytes, text_as_path: bool = True) -> str:
     """Convierte la primera página del PDF a SVG usando PyMuPDF."""
     if not pdf_bytes:
@@ -17,8 +19,7 @@ def _pdf_first_page_to_svg(pdf_bytes: bytes, text_as_path: bool = True) -> str:
     try:
         import fitz  # PyMuPDF
     except Exception:
-        # No levantamos excepción dura para no romper el guardado si falta la lib
-        # pero puedes cambiar a frappe.throw si quieres bloquear.
+        # No bloqueamos el guardado si falta la lib; deja rastro en Error Log.
         frappe.log_error("PyMuPDF no está instalado.", "IGCTools: auto SVG")
         return ""
 
@@ -33,6 +34,7 @@ def _pdf_first_page_to_svg(pdf_bytes: bytes, text_as_path: bool = True) -> str:
         # Logueamos y devolvemos vacío para no bloquear el guardado
         frappe.log_error(frappe.utils.cstr(e), "IGCTools: error convirtiendo PDF→SVG")
         return ""
+
 
 def auto_svg_from_printcard(doc, method):
     """
@@ -55,13 +57,11 @@ def auto_svg_from_printcard(doc, method):
         pc = frappe.get_doc("PrintCard", printcard_name)
         file_url = (pc.get("archivo") or "").strip()
         if not file_url:
-            # Si no hay PDF, opcionalmente podrías limpiar svg_arte:
+            # Si no hay PDF, puedes limpiar svg_arte si lo prefieres:
             # doc.set("svg_arte", "")
             return
 
-        # Heurística simple para no recalcular siempre:
-        # si ya hay svg_arte y el printcard no cambió, puedes salirte.
-        # (Descomenta si quieres esta optimización)
+        # (Opcional) evitar recalcular si ya hay SVG y no cambió el PrintCard
         # if doc.get("svg_arte") and not doc.is_new():
         #     old = frappe.db.get_value("Project", doc.name, ["printcard", "svg_arte"], as_dict=True)
         #     if old and old.printcard == printcard_name and old.svg_arte:
@@ -82,3 +82,13 @@ def auto_svg_from_printcard(doc, method):
         # No rompemos el guardado del Project: solo dejamos constancia en Error Log.
         frappe.log_error(frappe.utils.cstr(e), "IGCTools: auto_svg_from_printcard")
         # Si prefieres bloquear, reemplaza por: frappe.throw("Detalle del error…")
+
+
+@frappe.whitelist()
+def pymupdf_status():
+    """Ping para confirmar que PyMuPDF está instalado en el server (endpoint de prueba)."""
+    try:
+        import fitz  # PyMuPDF
+        return {"ok": True, "version": getattr(fitz, "__version__", None)}
+    except Exception as e:
+        return {"ok": False, "error": repr(e)}
