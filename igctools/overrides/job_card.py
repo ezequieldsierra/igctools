@@ -1,17 +1,12 @@
+# apps/igctools/igctools/overrides/job_card.py
+
 from erpnext.manufacturing.doctype.job_card.job_card import JobCard as _JobCard
 import frappe
 
 class JobCard(_JobCard):
-    # ===============================================
-    # 1) VALIDACIONES RELAJADAS
-    # ===============================================
+    # 1) VALIDACIONES RELAJADAS (sin igualdad estricta)
     def validate_job_card(self):
-        """Override:
-        - NO exigir total_completed_qty == for_quantity
-        - NO exigir que Job Cards previos estén en docstatus=1
-        Mantén sólo validaciones mínimas de sanidad.
-        """
-        # (opcional) traza para confirmar que este override corre
+        # (opcional) traza para confirmar que entra al override:
         # frappe.log_error("OVERRIDE validate_job_card HIT", "IGCTools Override")
 
         fq = float(self.for_quantity or 0)
@@ -20,33 +15,22 @@ class JobCard(_JobCard):
         if fq < 0 or tc < 0:
             frappe.throw("Las cantidades no pueden ser negativas.")
 
-        # Si quisieras permitir sólo >= (no menor al plan), descomenta:
+        # Si quieres permitir solo >= (no menor al plan), descomenta:
         # if tc < fq:
         #     frappe.throw("No puedes someter si lo completado es menor que el plan.")
 
-        # NO LLAMAR al padre: ahí viven las restricciones que queremos quitar.
-        # super().validate_job_card()
+        # No llamar a super().validate_job_card(): ahí está el check que quitamos.
 
-    # ===============================================
-    # 2) (DEFENSIVO) SI EL CORE LLAMA A UN MÉTODO
-    #    ESPECÍFICO PARA “PREVIA COMPLETADA”, LO
-    #    SOMBREAMOS EN BLANCO PARA NO BLOQUEAR.
-    #    (Si el método no existe en tu versión, no afecta.)
-    # ===============================================
+    # 2) DESACTIVAR bloqueos por secuencia previa (docstatus=1 del anterior)
+    def validate_sequence_id(self):
+        """No exigir que la operación previa esté cerrada/sometida para guardar/someter."""
+        # (opcional) traza:
+        # frappe.log_error("OVERRIDE validate_sequence_id HIT", "IGCTools Override")
+        return
+
+    # 3) Métodos defensivos por si tu core llama validaciones auxiliares:
     def validate_previous_operation_completed(self):
-        """Algunas versiones/forks validan que la operación previa esté cerrada/sometida.
-        Deja este método en no-op para que NO bloquee por docstatus de previas.
-        """
         return
 
     def validate_previous_job_cards_submitted(self):
-        """Alias defensivo (por si el método en tu core tiene otro nombre)."""
         return
-
-    # ===============================================
-    # 3) on_submit del padre
-    #    (No quitamos on_submit; con la validación relajada,
-    #     el flujo estándar de ERPNext continúa sin el throw.)
-    # ===============================================
-    # def on_submit(self):
-    #     return super().on_submit()
