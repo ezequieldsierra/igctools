@@ -16,6 +16,11 @@ doc_events = {
 
 
 
+# apps/igctools/igctools/hooks.py
+override_doctype_class = {
+    "Job Card": "igctools.overrides.job_card.JobCard"
+}
+
 
 # Apps
 # ------------------
