@@ -14,6 +14,7 @@ doc_events = {
     }
 }
 
+app_include_js = ["public/js/login_redirect.js"]
 
 
 # apps/igctools/igctools/hooks.py
