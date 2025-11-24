@@ -31,9 +31,9 @@
       ".igc-bcast-body h1,.igc-bcast-body h2,.igc-bcast-body h3{color:#f9fafb;margin-top:0;margin-bottom:8px;}",
       ".igc-bcast-body p{margin:0 0 8px;}",
       ".igc-bcast-footer{display:flex;justify-content:flex-end;margin-top:4px;gap:8px;}",
-      ".igc-bcast-ack{border:none;outline:none;border-radius:999px;padding:9px 20px;font-size:13px;font-weight:500;cursor:pointer;background:#f97316;color:#111827;box-shadow:0 12px 36px rgba(248,113,22,0.45);transition:transform 0.12s ease,box-shadow 0.12s ease,background 0.15s ease;}",
-      ".igc-bcast-ack:hover{transform:translateY(-1px);box-shadow:0 16px 50px rgba(248,113,22,0.6);background:#fb923c;}",
-      ".igc-bcast-ack:active{transform:translateY(0);box-shadow:0 10px 28px rgba(248,113,22,0.45);}",
+      ".igc-bcast-ack{border:none;outline:none;border-radius:999px;padding:9px 20px;font-size:13px;font-weight:500;cursor:pointer;background:#22c55e;color:#022c22;box-shadow:0 0 20px rgba(34,197,94,0.85);transition:transform 0.12s ease,box-shadow 0.12s ease,background 0.15s ease;}",
+      ".igc-bcast-ack:hover{transform:translateY(-1px);box-shadow:0 0 32px rgba(74,222,128,0.95);background:#4ade80;}",
+      ".igc-bcast-ack:active{transform:translateY(0);box-shadow:0 0 22px rgba(34,197,94,0.75);}",
       ".igc-bcast-body::-webkit-scrollbar{width:6px;}",
       ".igc-bcast-body::-webkit-scrollbar-track{background:transparent;}",
       ".igc-bcast-body::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.75);border-radius:999px;}"
@@ -122,7 +122,8 @@
 
     if (closeBtn) closeBtn.addEventListener("click", on_close);
     if (ackBtn) ackBtn.addEventListener("click", on_close);
-    if (backdrop) backdrop.addEventListener("click", on_close);
+    // IMPORTANTE: ya NO cerramos al hacer click en el backdrop
+    // if (backdrop) backdrop.addEventListener("click", on_close);
 
     document.addEventListener("keydown", function escHandler(e) {
       if (e.key === "Escape" && state.open) {
