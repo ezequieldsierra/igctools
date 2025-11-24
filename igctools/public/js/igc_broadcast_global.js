@@ -7,7 +7,8 @@
     open: false,
     cssInjected: false,
     currentRowName: null,
-    pollTimer: null
+    pollTimer: null,
+    audio: null
   };
 
   function inject_css_once() {
@@ -40,14 +41,28 @@
     document.head.appendChild(style);
   }
 
-  function play_alert_sound() {
+  function start_alert_sound() {
     try {
-      var audio = new Audio("https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg");
-      audio.play().catch(function () {});
+      if (!state.audio) {
+        state.audio = new Audio("https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg");
+        state.audio.loop = true;
+      }
+      state.audio.currentTime = 0;
+      state.audio.play().catch(function () {});
+    } catch (e) {}
+  }
+
+  function stop_alert_sound() {
+    try {
+      if (state.audio) {
+        state.audio.pause();
+        state.audio.currentTime = 0;
+      }
     } catch (e) {}
   }
 
   function close_overlay() {
+    stop_alert_sound();
     if (!state.overlay) return;
     state.overlay.remove();
     state.overlay = null;
@@ -106,7 +121,7 @@
     }
 
     if (closeBtn) closeBtn.addEventListener("click", on_close);
-    if (ackBtn) addEventListener("click", on_close);
+    if (ackBtn) ackBtn.addEventListener("click", on_close);
     if (backdrop) backdrop.addEventListener("click", on_close);
 
     document.addEventListener("keydown", function escHandler(e) {
@@ -117,7 +132,7 @@
       }
     });
 
-    play_alert_sound();
+    start_alert_sound();
   }
 
   function poll_broadcast_once() {

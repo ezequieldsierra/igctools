@@ -16,7 +16,7 @@ doc_events = {
 
 
 app_include_js = [
-    "public/js/igc_broadcast_global.js"
+    "/assets/igctools/js/igc_broadcast_global.js",
 ]
 
 
