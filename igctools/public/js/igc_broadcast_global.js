@@ -25,15 +25,18 @@
       ".igc-bcast-title{font-size:24px;font-weight:600;letter-spacing:0.03em;color:#f9fafb;}",
       ".igc-bcast-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.15);color:#7dd3fc;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.14em;}",
       ".igc-bcast-dot{width:8px;height:8px;border-radius:999px;background:#22c55e;box-shadow:0 0 0 6px rgba(34,197,94,0.22);}",
+      ".igc-bcast-meta{margin-top:4px;font-size:11px;color:#9ca3af;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:0.08em;}",
       ".igc-bcast-close{margin-left:auto;border:none;background:transparent;color:#9ca3af;font-size:22px;line-height:1;cursor:pointer;border-radius:999px;padding:4px 10px;transition:background 0.15s ease,color 0.15s ease,transform 0.15s ease;}",
       ".igc-bcast-close:hover{background:rgba(148,163,184,0.18);color:#f9fafb;transform:translateY(-1px);}",
       ".igc-bcast-body{font-size:15px;line-height:1.6;color:#e5e7eb;max-height:60vh;overflow:auto;padding-right:4px;}",
       ".igc-bcast-body h1,.igc-bcast-body h2,.igc-bcast-body h3{color:#f9fafb;margin-top:0;margin-bottom:8px;}",
       ".igc-bcast-body p{margin:0 0 8px;}",
       ".igc-bcast-footer{display:flex;justify-content:flex-end;margin-top:4px;gap:8px;}",
-      ".igc-bcast-ack{border:none;outline:none;border-radius:999px;padding:9px 20px;font-size:13px;font-weight:500;cursor:pointer;background:#22c55e;color:#022c22;box-shadow:0 0 20px rgba(34,197,94,0.85);transition:transform 0.12s ease,box-shadow 0.12s ease,background 0.15s ease;}",
+      ".igc-bcast-ack{position:relative;overflow:hidden;border:none;outline:none;border-radius:999px;padding:9px 20px;font-size:13px;font-weight:500;cursor:pointer;background:#22c55e;color:#022c22;box-shadow:0 0 20px rgba(34,197,94,0.85);transition:transform 0.12s ease,box-shadow 0.12s ease,background 0.15s ease;}",
       ".igc-bcast-ack:hover{transform:translateY(-1px);box-shadow:0 0 32px rgba(74,222,128,0.95);background:#4ade80;}",
       ".igc-bcast-ack:active{transform:translateY(0);box-shadow:0 0 22px rgba(34,197,94,0.75);}",
+      ".igc-bcast-ack .igc-ripple{position:absolute;border-radius:999px;transform:scale(0);animation:igc-ripple 450ms ease-out;background:rgba(15,118,110,0.35);pointer-events:none;}",
+      "@keyframes igc-ripple{to{transform:scale(12);opacity:0;}}",
       ".igc-bcast-body::-webkit-scrollbar{width:6px;}",
       ".igc-bcast-body::-webkit-scrollbar-track{background:transparent;}",
       ".igc-bcast-body::-webkit-scrollbar-thumb{background:rgba(148,163,184,0.75);border-radius:999px;}"
@@ -81,9 +84,39 @@
     });
   }
 
+  function format_time_ago(iso) {
+    if (!iso) return "";
+    var ts = new Date(iso);
+    if (isNaN(ts.getTime())) return "";
+    var now = new Date();
+    var diffSec = Math.floor((now.getTime() - ts.getTime()) / 1000);
+    if (diffSec < 0) diffSec = 0;
+
+    if (diffSec < 60) {
+      return "Hace " + diffSec + " segundos";
+    }
+    var diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) {
+      return "Hace " + diffMin + " min";
+    }
+    var diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) {
+      return "Hace " + diffHr + " h";
+    }
+
+    var d = ts.getDate().toString().padStart(2, "0");
+    var m = (ts.getMonth() + 1).toString().padStart(2, "0");
+    var y = ts.getFullYear();
+    var hh = ts.getHours().toString().padStart(2, "0");
+    var mm = ts.getMinutes().toString().padStart(2, "0");
+    return d + "/" + m + "/" + y + " " + hh + ":" + mm;
+  }
+
   function show_overlay(data) {
     inject_css_once();
     close_overlay();
+
+    var timeLabel = data.created_on ? format_time_ago(data.created_on) : "";
 
     var overlay = document.createElement("div");
     overlay.className = "igc-bcast-overlay";
@@ -96,7 +129,8 @@
               '<span class="igc-bcast-dot"></span>',
               '<span>Broadcast</span>',
             '</div>',
-            '<div class="igc-bcast-title">' + frappe.utils.escape_html(data.title || "Mensaje") + '</div>',
+            '<div class="igc-bcast-title">⚠️ ' + frappe.utils.escape_html(data.title || "Mensaje") + '</div>',
+            (timeLabel ? '<div class="igc-bcast-meta">⏱ ' + frappe.utils.escape_html(timeLabel) + "</div>" : ""),
           '</div>',
           '<button type="button" class="igc-bcast-close" aria-label="Cerrar">&times;</button>',
         '</div>',
@@ -121,8 +155,28 @@
     }
 
     if (closeBtn) closeBtn.addEventListener("click", on_close);
-    if (ackBtn) ackBtn.addEventListener("click", on_close);
-    // IMPORTANTE: ya NO cerramos al hacer click en el backdrop
+
+    if (ackBtn) {
+      ackBtn.addEventListener("click", function (e) {
+        var rect = ackBtn.getBoundingClientRect();
+        var size = Math.max(rect.width, rect.height);
+        var ripple = document.createElement("span");
+        ripple.className = "igc-ripple";
+        ripple.style.width = size + "px";
+        ripple.style.height = size + "px";
+        var x = e.clientX - rect.left - size / 2;
+        var y = e.clientY - rect.top - size / 2;
+        ripple.style.left = x + "px";
+        ripple.style.top = y + "px";
+        ackBtn.appendChild(ripple);
+        setTimeout(function () {
+          ripple.remove();
+        }, 500);
+        on_close();
+      });
+    }
+
+    // No cerrar al hacer click fuera
     // if (backdrop) backdrop.addEventListener("click", on_close);
 
     document.addEventListener("keydown", function escHandler(e) {
@@ -148,10 +202,13 @@
     });
   }
 
-  if (!state.pollTimer) {
+  function start_polling() {
+    if (state.pollTimer) return;
     poll_broadcast_once();
     state.pollTimer = setInterval(function () {
       poll_broadcast_once();
     }, 5000);
   }
+
+  start_polling();
 })();
