@@ -14,7 +14,10 @@ doc_events = {
     }
 }
 
-app_include_js = ["public/js/login_redirect.js"]
+
+app_include_js = [
+    "public/js/igc_broadcast_global.js"
+]
 
 
 # apps/igctools/igctools/hooks.py
