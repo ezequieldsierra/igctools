@@ -391,7 +391,7 @@ def find_similar_dies_from_svg(svg_text, tolerance_mm=3.0, max_results=30):
     candidatos = []
 
     for t in troqueles:
-        svg_t = (t.get("svg_plano_mecanico_individual") or "").trim()
+        svg_t = (t.get("svg_plano_mecanico_individual") or "").strip()
         if not svg_t:
             continue
 
