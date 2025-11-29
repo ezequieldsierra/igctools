@@ -187,10 +187,14 @@ def _extract_segments(root):
 
 
 def _compute_signature(segments, width, height):
+    # Usar SOLO líneas de hendido para la firma de paneles
     vertical_positions = []
     horizontal_positions = []
 
     for seg in segments:
+        if seg.get("type") != "crease":
+            continue
+
         length = seg["length"]
         if length <= 0.1:
             continue
@@ -203,9 +207,12 @@ def _compute_signature(segments, width, height):
         dx = abs(x2 - x1)
         dy = abs(y2 - y1)
 
+        # Vertical casi perfecta y relativamente larga
         if dx < 0.05 and length > 5.0:
             x_mid = 0.5 * (x1 + x2)
             vertical_positions.append(x_mid)
+
+        # Horizontal casi perfecta y relativamente larga
         elif dy < 0.05 and length > 5.0:
             y_mid = 0.5 * (y1 + y2)
             horizontal_positions.append(y_mid)
@@ -217,7 +224,7 @@ def _compute_signature(segments, width, height):
         if not pos_list:
             return []
         merged = [pos_list[0]]
-        tol_merge = 0.5
+        tol_merge = 0.5  # mm
         for p in pos_list[1:]:
             if abs(p - merged[-1]) <= tol_merge:
                 merged[-1] = 0.5 * (merged[-1] + p)
@@ -251,6 +258,7 @@ def _compute_signature(segments, width, height):
         dy_list = dy_list[:max_panels]
 
     return dx_list, dy_list
+
 
 
 def analyze_die_svg(svg_text):
