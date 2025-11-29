@@ -309,12 +309,15 @@ def compare_die_features(cliente, troq, tolerance_mm):
     tw = troq.get("width")
     th = troq.get("height")
 
+    # Debe tener tamaños válidos
     if not cw or not ch or not tw or not th:
         return None, False
 
+    # Diferencias sin rotar
     dw1 = abs(cw - tw)
     dh1 = abs(ch - th)
 
+    # Diferencias rotando 90° el troquel
     dw2 = abs(cw - th)
     dh2 = abs(ch - tw)
 
@@ -329,9 +332,18 @@ def compare_die_features(cliente, troq, tolerance_mm):
 
     tol = tolerance_mm if tolerance_mm is not None else 3.0
 
+    # Filtro fuerte por tamaño absoluto (mm)
     if best_dw > tol or best_dh > tol:
         return None, False
 
+    # Filtro adicional por proporción (por si el SVG viene muy distinto pero dentro de mm)
+    # Ej: no aceptar si difiere más de 5% en ancho o alto relativo
+    rel_w = best_dw / max(cw, tw if not rotated else th)
+    rel_h = best_dh / max(ch, th if not rotated else tw)
+    if rel_w > 0.05 or rel_h > 0.05:
+        return None, False
+
+    # --- Si llegó aquí: tamaño OK → ahora sí comparamos forma ---
     c_dx = cliente.get("dx_list") or []
     c_dy = cliente.get("dy_list") or []
     t_dx = troq.get("dx_list") or []
@@ -365,6 +377,7 @@ def compare_die_features(cliente, troq, tolerance_mm):
         "shape_score": shape_score,
         "total_score": total_score
     }, True
+
 
 
 @frappe.whitelist()
