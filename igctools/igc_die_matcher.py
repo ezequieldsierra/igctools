@@ -24,35 +24,60 @@ def _parse_dim_attr(raw):
         return None
 
     unit = unit.strip().lower()
+
+    # Pulgadas → mm
     if unit in ("in", "inch", "inches"):
         return val * 25.4
+
+    # Milímetros → mm
     if unit in ("mm", "millimeter", "millimeters", ""):
         return val
-    return val
+
+    # Centímetros → mm
+    if unit in ("cm", "centimeter", "centimetre", "centimeters"):
+        return val * 10.0
+
+    # Puntos tipográficos (72 pt = 1 in)
+    if unit in ("pt", "point", "points"):
+        return val * 25.4 / 72.0
+
+    # Pixeles (96 px = 1 in)
+    if unit in ("px", "pixel", "pixels"):
+        return val * 25.4 / 96.0
+
+    # Unidad desconocida → que lo resuelva el viewBox
+    return None
 
 
 def _parse_svg_bbox_from_root(root):
     width = None
     height = None
 
-    viewbox = root.get("viewBox") or root.get("viewbox")
-    if viewbox:
-        parts = viewbox.replace(",", " ").split()
-        if len(parts) == 4:
-            try:
-                width = float(parts[2])
-                height = float(parts[3])
-            except Exception:
-                width = None
-                height = None
+    # 1) Intentar primero width/height físicos (con unidades)
+    w_attr = root.get("width")
+    h_attr = root.get("height")
+    w_val = _parse_dim_attr(w_attr) if w_attr else None
+    h_val = _parse_dim_attr(h_attr) if h_attr else None
 
+    if w_val is not None and h_val is not None:
+        width = w_val
+        height = h_val
+
+    # 2) Si no tenemos width/height válidos, usar viewBox
     if width is None or height is None:
-        w_attr = root.get("width")
-        h_attr = root.get("height")
-        w_val = _parse_dim_attr(w_attr) if w_attr else None
-        h_val = _parse_dim_attr(h_attr) if h_attr else None
-        width = width if width is not None else w_val
-        height = height if height is not None else h_val
+        viewbox = root.get("viewBox") or root.get("viewbox")
+        if viewbox:
+            parts = viewbox.replace(",", " ").split()
+            if len(parts) == 4:
+                try:
+                    vw = float(parts[2])
+                    vh = float(parts[3])
+                    if width is None:
+                        width = vw
+                    if height is None:
+                        height = vh
+                except Exception:
+                    pass
 
     return width, height
 
@@ -187,7 +212,6 @@ def _extract_segments(root):
 
 
 def _compute_signature(segments, width, height):
-    # Usar SOLO líneas de hendido para la firma de paneles
     vertical_positions = []
     horizontal_positions = []
 
@@ -207,12 +231,9 @@ def _compute_signature(segments, width, height):
         dx = abs(x2 - x1)
         dy = abs(y2 - y1)
 
-        # Vertical casi perfecta y relativamente larga
         if dx < 0.05 and length > 5.0:
             x_mid = 0.5 * (x1 + x2)
             vertical_positions.append(x_mid)
-
-        # Horizontal casi perfecta y relativamente larga
         elif dy < 0.05 and length > 5.0:
             y_mid = 0.5 * (y1 + y2)
             horizontal_positions.append(y_mid)
@@ -224,7 +245,7 @@ def _compute_signature(segments, width, height):
         if not pos_list:
             return []
         merged = [pos_list[0]]
-        tol_merge = 0.5  # mm
+        tol_merge = 0.5
         for p in pos_list[1:]:
             if abs(p - merged[-1]) <= tol_merge:
                 merged[-1] = 0.5 * (merged[-1] + p)
@@ -258,7 +279,6 @@ def _compute_signature(segments, width, height):
         dy_list = dy_list[:max_panels]
 
     return dx_list, dy_list
-
 
 
 def analyze_die_svg(svg_text):
@@ -312,56 +332,44 @@ def compare_die_features(cliente, troq, tolerance_mm):
     if not cw or not ch or not tw or not th:
         return None, False
 
-    # Diferencias sin rotar (cliente: cw x ch  vs troquel: tw x th)
     dw1 = abs(cw - tw)
     dh1 = abs(ch - th)
 
-    # Diferencias rotando el troquel 90° (cliente: cw x ch  vs troquel: th x tw)
     dw2 = abs(cw - th)
     dh2 = abs(ch - tw)
 
     tol = tolerance_mm if tolerance_mm is not None else 3.0
 
-    # ✔ Orientación 1 es válida SOLO si ancho y alto cumplen tolerancia
     ok1 = (dw1 <= tol) and (dh1 <= tol)
-
-    # ✔ Orientación 2 es válida SOLO si ancho y alto cumplen tolerancia
     ok2 = (dw2 <= tol) and (dh2 <= tol)
 
-    # Si ninguna orientación cumple ambas condiciones → descartar
     if not ok1 and not ok2:
         return None, False
 
-    # Elegimos la mejor orientación ENTRE las que sí cumplen
     if ok1 and ok2:
-        # Si las dos son válidas, nos quedamos con la que tiene menor diferencia total
         if (dw1 + dh1) <= (dw2 + dh2):
             best_dw, best_dh, rotated = dw1, dh1, False
         else:
             best_dw, best_dh, rotated = dw2, dh2, True
     elif ok1:
         best_dw, best_dh, rotated = dw1, dh1, False
-    else:  # ok2
+    else:
         best_dw, best_dh, rotated = dw2, dh2, True
 
-    # (opcional pero recomendable) chequeo de proporción ancho/alto
     try:
         aspect_c = cw / ch
         aspect_t = (th / tw) if rotated else (tw / th)
     except Exception:
         return None, False
 
-    # Si difiere más de 5% en proporción → fuera
     if abs(aspect_c - aspect_t) > 0.05 * aspect_c:
         return None, False
 
-    # --- Firma de paneles (solo hendido) ---
     c_dx = cliente.get("dx_list") or []
     c_dy = cliente.get("dy_list") or []
     t_dx = troq.get("dx_list") or []
     t_dy = troq.get("dy_list") or []
 
-    # Si el número de paneles es muy distinto, no vale
     if abs(len(c_dx) - len(t_dx)) > 1 or abs(len(c_dy) - len(t_dy)) > 1:
         return None, False
 
@@ -383,7 +391,6 @@ def compare_die_features(cliente, troq, tolerance_mm):
     shape_dy = signature_distance(c_dy, t_dy)
     shape_score = shape_dx + shape_dy
 
-    # Filtro duro: si la forma se va mucho, ni lo consideres
     if shape_score > 1.0:
         return None, False
 
@@ -399,10 +406,8 @@ def compare_die_features(cliente, troq, tolerance_mm):
     }, True
 
 
-
-
 @frappe.whitelist()
-def find_similar_dies_from_svg(svg_text, tolerance_mm=3.0, max_results=30):
+def find_similar_dies_from_svg(svg_text, tolerance_mm=3.0, max_results=30, tipo_producto=None):
     if not svg_text:
         return []
 
@@ -423,9 +428,16 @@ def find_similar_dies_from_svg(svg_text, tolerance_mm=3.0, max_results=30):
     if not cw or not ch:
         return []
 
+    troquel_filters = {
+        "svg_plano_mecanico_individual": ["is", "set"]
+    }
+
+    if tipo_producto:
+        troquel_filters["tipo_producto"] = tipo_producto
+
     troqueles = frappe.get_all(
         "Troquel",
-        filters={"svg_plano_mecanico_individual": ["is", "set"]},
+        filters=troquel_filters,
         fields=["name", "svg_plano_mecanico_individual"],
         limit=500
     )
