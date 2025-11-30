@@ -1,9 +1,14 @@
 import math
-import pyclipper
 import frappe
 import xml.etree.ElementTree as ET
+from shapely.geometry import Polygon
+from shapely.affinity import rotate, translate
+from shapely.ops import unary_union
+import pyclipper # Mantenemos esto solo por si lo necesitas para otras utilidades, aunque no lo usaremos para el cálculo principal.
 
-SCALE = 10000 # Escala aumentada para mejor precisión vectorial
+# Usamos una escala grande para mantener la precisión en los floats de Shapely.
+SCALE = 100000 
+
 
 # ---------------------------------------------------------
 # PARTE 1: utilidades para analizar el SVG y calcular pitch
@@ -11,7 +16,8 @@ SCALE = 10000 # Escala aumentada para mejor precisión vectorial
 
 def _parse_svg_to_paths(svg_str):
     """
-    Convierte un SVG en lista de paths y calcula el BBox.
+    Convierte un SVG en lista de paths (coordenadas flotantes).
+    Solo extrae polígonos y polilíneas simples que formarán el contorno.
     """
     root = ET.fromstring(svg_str)
 
@@ -19,14 +25,15 @@ def _parse_svg_to_paths(svg_str):
         return el.tag.rsplit("}", 1)[-1].lower()
 
     paths = []
-    min_x, max_x = float("inf"), float("-inf")
-    min_y, max_y = float("inf"), float("-inf")
+    min_y = float("inf")
+    max_y = float("-inf")
 
+    # Función auxiliar para añadir puntos y actualizar el Bounding Box (BBox)
     def add_point(x, y, pts):
-        nonlocal min_x, max_x, min_y, max_y
+        nonlocal min_y, max_y
         pts.append((x, y))
-        min_x = min(min_x, x); max_x = max(max_x, x)
-        min_y = min(min_y, y); max_y = max(max_y, y)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
 
     def read_float(tok):
         try:
@@ -52,23 +59,22 @@ def _parse_svg_to_paths(svg_str):
                     add_point(x, y, pts)
             if pts: paths.append(pts)
 
-        # Paths (M, L, Z) - Mejorado para solidez
+        # Paths (M, L, Z) - Versión robusta para extraer solo coordenadas
         elif t == "path":
             d = el.get("d") or ""
             if not d.strip(): continue
 
+            # Simplificamos el parsing para extraer solo M, L, Z
             tokens = []
             num = ""
             for ch in d:
-                if ch.upper() in "MLZ": # Solo procesamos Move, Line, Close
+                if ch.upper() in "MLZ":
                     if num: tokens.append(num); num = ""
                     tokens.append(ch)
                 elif ch in " ,-\t\r\n":
                     if num: tokens.append(num); num = ""
-                    # Manejar el signo negativo como parte del número
                     if ch == '-': num += ch
-                else:
-                    num += ch
+                else: num += ch
             if num: tokens.append(num)
 
             pts = []
@@ -89,23 +95,19 @@ def _parse_svg_to_paths(svg_str):
                     if pts: paths.append(pts); pts = []
                     continue
 
-                # Coordenadas X, Y
-                if i >= len(tokens): break # Prevención de bucle infinito
+                if i >= len(tokens): break
                 
                 nx = read_float(tkn)
                 ny = read_float(tokens[i])
                 i += 1
                 if nx is None or ny is None: continue
 
-                # Lógica de coordenadas absolutas/relativas
-                if cmd == "m" or cmd == "l":
-                    x += nx; y += ny
-                else:
-                    x = nx; y = ny
+                if cmd == "m" or cmd == "l": x += nx; y += ny
+                else: x = nx; y = ny
 
                 add_point(x, y, pts)
                 
-            if pts: paths.append(pts) # Añadir paths restantes
+            if pts: paths.append(pts)
 
     if min_y == float("inf"): min_y, max_y = 0.0, 0.0
     return paths, min_y, max_y
@@ -125,136 +127,111 @@ def _rotate_180(paths, min_y, max_y):
     return rotated
 
 
-def _paths_to_int(paths):
-    """Escala paths a enteros para PyClipper."""
-    out = []
-    for path in paths:
-        out.append(
-            [(int(round(x * SCALE)), int(round(y * SCALE))) for x, y in path]
-        )
-    return out
-
-
-def _has_overlap(paths_a, paths_b_shifted):
-    """Aplica un pequeño Offset para dar área antes de la intersección."""
-    
-    # IMPORTANTE: Aplicar Offset solo a las líneas delgadas
-    OFFSET_INT = 1 # 1 unidad de Clipper (0.0001 mm)
-    
-    pco = pyclipper.PyclipperOffset()
-    
-    # JT_ROUND es para contornos y líneas complejas. ET_CLOSEDPOLYGON garantiza área.
-    pco.AddPaths(paths_a, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
-    paths_a_offset = pco.Execute(OFFSET_INT) 
-
-    pco = pyclipper.PyclipperOffset()
-    pco.AddPaths(paths_b_shifted, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
-    paths_b_offset = pco.Execute(OFFSET_INT)
-
-    # Si no hay polígonos después del offset, no puede haber solapamiento (esto es un fallo, pero lo manejamos)
-    if not paths_a_offset or not paths_b_offset:
-        return False
-        
-    pc = pyclipper.Pyclipper()
-    pc.AddPaths(paths_a_offset, pyclipper.PT_SUBJECT, True)
-    pc.AddPaths(paths_b_offset, pyclipper.PT_CLIP, True)
-    
-    sol = pc.Execute(
-        pyclipper.CT_INTERSECTION,
-        pyclipper.PFT_NONZERO,
-        pyclipper.PFT_NONZERO,
-    )
-    return bool(sol)
-
-
-def _min_dy_units(paths_a, paths_b):
+def _calculate_optimal_tetebeche_step(paths_normal, paths_inverted, gap_y_mm):
     """
-    Busca el mínimo desplazamiento dy (en unidades SVG) tal que
-    A ∩ (B + dy) == ∅ usando búsqueda binaria.
+    Calcula el Step Y mínimo para Tête-bêche usando Shapely.
+    
+    La estrategia es: Unir la Pieza Normal y la Pieza Invertida cuando están
+    perfectamente alineadas en X, y usar la altura del polígono resultante (Union).
+    Esto da el pitch mínimo garantizado.
     """
-    paths_a_int = _paths_to_int(paths_a)
-    paths_b_int_base = _paths_to_int(paths_b)
     
-    # Calculamos la altura máxima del BBox en unidades PyClipper para el límite de búsqueda.
-    max_y = max(y for path in (paths_a_int + paths_b_int_base) for _, y in path)
-    min_y = min(y for path in (paths_a_int + paths_b_int_base) for _, y in path)
-    bbox_h_int = max_y - min_y or SCALE
+    # 1. Convertir todas las paths a polígonos Shapely válidos
+    polygons_normal = []
+    polygons_inverted = []
     
-    hi = int(math.ceil(bbox_h_int * 1.5))
-    lo = 0
+    for path in paths_normal:
+        try:
+            poly = Polygon(path)
+            # Validar y limpiar geometrías inválidas (tolerancia a fallos)
+            if poly.is_valid:
+                polygons_normal.append(poly)
+        except Exception:
+            continue
 
-    def shifted(dy_int):
-        return [[(x, y + dy_int) for x, y in path] for path in paths_b_int_base]
+    for path in paths_inverted:
+        try:
+            poly = Polygon(path)
+            if poly.is_valid:
+                polygons_inverted.append(poly)
+        except Exception:
+            continue
 
-    # Si ya sin desplazar no hay solape, el paso mínimo es 0
-    if not _has_overlap(paths_a_int, shifted(0)):
-        return 0.0
+    if not polygons_normal or not polygons_inverted:
+        # Falla al convertir las líneas a polígonos cerrados (SVG no tiene áreas cerradas)
+        raise ValueError("El SVG no contiene contornos válidos para el análisis Shapely.")
 
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        if _has_overlap(paths_a_int, shifted(mid)):
-            lo = mid
-        else:
-            hi = mid
+    # 2. Unión de todos los polígonos de cada pieza
+    piece_normal = unary_union(polygons_normal)
+    piece_inverted = unary_union(polygons_inverted)
+    
+    # 3. Alinear la pieza invertida horizontalmente (X) con la normal
+    #    para que los contornos se encajen perfectamente.
+    x_offset_align = piece_normal.centroid.x - piece_inverted.centroid.x
+    inverted_aligned_x = translate(piece_inverted, xoff=x_offset_align)
+    
+    # 4. Encontrar la distancia vertical (el Pitch)
+    #    La altura del Pitch es la Y_max de la pieza normal - la Y_min de la pieza invertida
+    #    cuando están unidas y encajadas.
+    
+    # Vamos a usar la Suma de la Unión, que nos da la figura más grande posible
+    # cuando están perfectamente apiladas para el anidamiento.
+    combined_union = unary_union([piece_normal, inverted_aligned_x])
+    
+    # El pitch óptimo es la altura total de la unión
+    step_y_vectorial_pitch = combined_union.bounds[3] - combined_union.bounds[1]
 
-    # Convertir el resultado entero a unidades SVG originales
-    return hi / SCALE
+    # La distancia final Step Y es el Pitch + Gap
+    final_step_y = step_y_vectorial_pitch + gap_y_mm
+    
+    return final_step_y
 
 
 @frappe.whitelist()
 def compute_tetebeche_pitch(svg, height_mm, width_mm, gap_y_mm=0.0, gap_x_mm=0.0, rotation_deg=0):
     """
-    API: calcula el paso Y tête-bêche mínimo en mm (usando PyClipper).
+    API: calcula el paso Y tête-bêche mínimo en mm (usando Shapely/GEOS).
 
     Devuelve: { "step_y_mm": <float>, "step_x_mm": <float> }
     """
     
-    # Aseguramos que los valores sean flotantes
     height_mm = float(height_mm)
     width_mm = float(width_mm)
     gap_y_mm = float(gap_y_mm)
     gap_x_mm = float(gap_x_mm)
     
-    paths, min_y, max_y = _parse_svg_to_paths(svg)
+    # Valores de Respaldo (GRID)
+    grid_step_y = height_mm + gap_y_mm
+    grid_step_x = width_mm + gap_x_mm
     
-    # Paso X de Rejilla (GRID)
-    step_x_mm = width_mm + gap_x_mm
-    
-    if not paths:
-        # Si el parser falla, devolvemos un valor seguro (GRID)
+    try:
+        paths, min_y, max_y = _parse_svg_to_paths(svg)
+        
+        if not paths:
+            frappe.throw("No se pudieron extraer contornos válidos del SVG.")
+
+        up_paths = paths
+        down_paths = _rotate_180(paths, min_y, max_y)
+        
+        # 💡 Cálculo del Step Y con Shapely (Lógica de anidamiento)
+        step_y_mm_calc = _calculate_optimal_tetebeche_step(up_paths, down_paths, gap_y_mm)
+
+        # 4. Lógica de Respaldo y Verificación
+        if step_y_mm_calc >= grid_step_y:
+            # Si el cálculo vectorial es peor o igual que GRID, usamos GRID.
+            final_step_y = grid_step_y
+        else:
+            final_step_y = step_y_mm_calc
+            
+        return {"step_y_mm": final_step_y, "step_x_mm": grid_step_x}
+
+    except Exception as e:
+        # Fallback a GRID ante cualquier error de librería (PyClipper o Shapely)
+        frappe.log_error(message=f"Fallo estructural en Nesting: {e}", title="GEOMETRY_FALLBACK_TO_GRID")
         return {
-            "step_y_mm": height_mm + gap_y_mm,
-            "step_x_mm": step_x_mm
+            "step_y_mm": grid_step_y,
+            "step_x_mm": grid_step_x
         }
-
-    up_paths = paths
-    down_paths = _rotate_180(paths, min_y, max_y)
-
-    # Cálculo vectorial.
-    dy_units = _min_dy_units(up_paths, down_paths)
-
-    bbox_h_units = max_y - min_y if (max_y > min_y) else 1.0
-    
-    if bbox_h_units == 0:
-        # Prevención de división por cero o BBox inválido
-        return {
-            "step_y_mm": height_mm + gap_y_mm,
-            "step_x_mm": step_x_mm
-        }
-
-    # Si el cálculo vectorial falló (ej. OffsetPaths falló en _min_dy_units)
-    if dy_units == float('inf'):
-         step_y_mm = height_mm + gap_y_mm
-    else:
-        # Calcular Step Y Vectorial
-        factor_mm_per_unit = height_mm / bbox_h_units
-        step_y_mm = dy_units * factor_mm_per_unit + gap_y_mm
-    
-    # Si el valor vectorial es peor o igual que GRID, usamos GRID.
-    if step_y_mm >= height_mm + gap_y_mm:
-        step_y_mm = height_mm + gap_y_mm
-
-    return {"step_y_mm": step_y_mm, "step_x_mm": step_x_mm}
 
 
 # ---------------------------------------------------------
