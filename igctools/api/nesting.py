@@ -256,28 +256,24 @@ def get_papeles_para_material(material: str):
       en pulgadas, porque el client script los usa así.
     """
 
-    # Ajusta esto según tu modelo real.
-    # Versión genérica: todos los Items de tipo hoja que tengan
-    # ancho y alto definidos.
     papeles = frappe.get_all(
         "Item",
         filters={
             "disabled": 0,
             "is_stock_item": 1,
-            # Si tienes un campo que relaciona el material, ponlo aquí.
-            # Ejemplo hipotético:
+            # Si tienes un campo que relacione el material, ponlo aquí.
+            # Ejemplo:
             # "material_para_montaje": material,
         },
         fields=[
             "name",
             "item_name",
-            # Ajusta estos nombres a tus custom fields:
             "sheet_width",
             "sheet_height",
         ],
-        order_by="sheet_width * sheet_height desc",
+        # ❌ Nada de expresiones tipo "sheet_width * sheet_height"
+        # ✅ Orden simple por ancho y luego alto
+        order_by="sheet_width desc, sheet_height desc",
     )
 
-    # Por si tus campos estuvieran en mm y quieres convertirlos a pulgadas,
-    # puedes adaptar aquí. De momento se devuelve tal cual.
     return papeles
