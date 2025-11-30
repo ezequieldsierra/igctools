@@ -178,7 +178,7 @@ def normalize_svg_root(svg_text: str, width_mm: float, height_mm: float) -> str:
             s,
             flags=re.I,
         )
-        s = re.sub(r"\svector-effect=\"[^\"]*\"", "", s, flags=re.I)
+        s = re.sub(r'\svector-effect="[^"]*"', "", s, flags=re.I)
         s = re.sub(r"vector-effect\s*:\s*[^;]+;?", "", s, flags=re.I)
         s = re.sub(r'\sstroke-dasharray="(?!none)[^"]*"', "", s, flags=re.I)
         s = re.sub(r"stroke-dasharray\s*:\s*(?!none)[^;]+;?", "", s, flags=re.I)
@@ -456,6 +456,24 @@ def _ensure_dxf_layers(doc):
             doc.layers.add(lname.upper(), color=color)
 
 
+def _is_in_defs(el):
+    cur = el
+    try:
+        parent = cur.getparent()
+    except Exception:
+        parent = None
+    while parent is not None:
+        tag = getattr(parent, "tag", "")
+        local = tag.split("}", 1)[-1].lower()
+        if local == "defs":
+            return True
+        try:
+            parent = parent.getparent()
+        except Exception:
+            parent = None
+    return False
+
+
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_dxf(
     docname: str,
@@ -505,11 +523,17 @@ def export_generador_troquel_dxf(
     _ensure_dxf_layers(doc)
 
     for el in root.iter():
+        if _is_in_defs(el):
+            continue
+
         tag = etree.QName(el).localname.lower()
         if tag not in ("line", "polyline", "polygon", "path"):
             continue
 
         layer = _nearest_layer(el) or "cut"
+        if layer.lower() == "guide":
+            continue
+
         layer_upper = layer.upper()
         if layer_upper not in doc.layers:
             doc.layers.add(layer_upper, color=DXF_LAYER_COLOR.get(layer, 7))
