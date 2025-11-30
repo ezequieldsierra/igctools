@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class IGCBrodcastMessage(Document):
+class IGCBroadcastMessage(Document):
 	pass

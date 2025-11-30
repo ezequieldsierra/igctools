@@ -5,5 +5,5 @@
 from frappe.tests.utils import FrappeTestCase
 
 
-class TestIGCBrodcastMessage(FrappeTestCase):
+class TestIGCBroadcastMessage(FrappeTestCase):
 	pass
