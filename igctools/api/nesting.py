@@ -1,23 +1,28 @@
-# igctools/api/nesting.py
+# igctools/api/nesting.py  (parte superior)
 
 import math
-import pyclipper
 import frappe
 import xml.etree.ElementTree as ET
 
-SCALE = 1000  # Clipper trabaja mejor con enteros
+from shapely.geometry import LineString
+from shapely.ops import unary_union
+from shapely.affinity import rotate as shp_rotate, translate as shp_translate
+
+# Parámetros de geometría
+TOOL_RADIUS_MM = 0.05   # “grosor” de cuchilla en mm (ajustable)
+CLEAR_TOL_MM   = 0.01   # tolerancia para considerar “sin solape”
 
 
 # ---------------------------------------------------------
-# PARTE 1: utilidades para analizar el SVG y calcular pitch
+# 1) Parsear SVG → paths en unidades del SVG
 # ---------------------------------------------------------
 
 def _parse_svg_to_paths(svg_str):
     """
-    Convierte un SVG sencillo de troquel en lista de paths:
-    paths = [ [(x1,y1), (x2,y2), ...], ... ] en unidades del SVG.
-    Soporta <polygon>, <polyline> y algo básico de <path>.
-    Devuelve paths, min_y, max_y para poder escalar a mm luego.
+    Devuelve:
+        paths = [ [(x1,y1), (x2,y2), ...], ... ]
+        min_y, max_y   (en unidades tal cual del SVG)
+    Soporta <polygon>, <polyline> y <path> simple (M/L/Z).
     """
     root = ET.fromstring(svg_str)
 
@@ -34,14 +39,15 @@ def _parse_svg_to_paths(svg_str):
             return
         paths.append(pts)
         for _, y in pts:
-            min_y = min(min_y, y)
-            max_y = max(max_y, y)
+            if y < min_y:
+                min_y = y
+            if y > max_y:
+                max_y = y
 
-    # polygon / polyline / path
     for el in root.iter():
         t = tag_name(el)
 
-        # <polygon> y <polyline>
+        # --- polygon / polyline ---
         if t in ("polygon", "polyline"):
             pts_attr = el.get("points") or ""
             if not pts_attr.strip():
@@ -54,11 +60,11 @@ def _parse_svg_to_paths(svg_str):
                     x = float(xs)
                     y = float(ys)
                     pts.append((x, y))
-                except ValueError:
+                except Exception:
                     continue
             add_path(pts)
 
-        # soporte muy simple de <path> con M/L y coords absolutas
+        # --- path (M/L/Z muy simple, absolutas) ---
         elif t == "path":
             d = el.get("d") or ""
             if not d.strip():
@@ -84,7 +90,6 @@ def _parse_svg_to_paths(svg_str):
             pts = []
             i = 0
             x = y = 0.0
-            start_x = start_y = 0.0
             cmd = None
 
             def read_float(tok):
@@ -94,13 +99,16 @@ def _parse_svg_to_paths(svg_str):
                     return None
 
             while i < len(tokens):
-                tkn = tokens[i]
-                if tkn.upper() in ("M", "L"):
-                    cmd = tkn
+                tk = tokens[i]
+
+                if tk.upper() in ("M", "L"):
+                    cmd = tk
                     i += 1
                     continue
-                if tkn.upper() == "Z":
-                    if pts and (pts[0] != pts[-1]):
+
+                if tk.upper() == "Z":
+                    # cerrar si hace falta
+                    if pts and pts[0] != pts[-1]:
                         pts.append(pts[0])
                     i += 1
                     continue
@@ -109,9 +117,9 @@ def _parse_svg_to_paths(svg_str):
                     i += 1
                     continue
 
-                # coordenadas X,Y
                 if i + 1 >= len(tokens):
                     break
+
                 nx = read_float(tokens[i])
                 ny = read_float(tokens[i + 1])
                 i += 2
@@ -125,11 +133,9 @@ def _parse_svg_to_paths(svg_str):
                     x += nx
                     y += ny
                 else:
+                    # M / L absolutas
                     x = nx
                     y = ny
-
-                if cmd.upper() == "M":
-                    start_x, start_y = x, y
 
                 pts.append((x, y))
 
@@ -142,138 +148,125 @@ def _parse_svg_to_paths(svg_str):
     return paths, min_y, max_y
 
 
-def _rotate_180(paths, min_y, max_y):
+# ---------------------------------------------------------
+# 2) Paths SVG → sólido Shapely en mm
+# ---------------------------------------------------------
+
+def _svg_to_solid_mm(svg_str, height_mm):
     """
-    Rota 180° alrededor del centro vertical del bbox.
+    Convierte el SVG a una geometría Shapely en mm.
+    - Escala vertical para que la altura del bbox sea height_mm.
+    - Aplica un buffer TOOL_RADIUS_MM a las líneas (cuchilla).
     """
-    cy = (min_y + max_y) * 0.5
-    rotated = []
-    for path in paths:
-        new_path = []
-        for x, y in path:
-            nx = x
-            ny = 2 * cy - y
-            new_path.append((nx, ny))
-        rotated.append(new_path)
-    return rotated
+    paths, min_y, max_y = _parse_svg_to_paths(svg_str)
+    if not paths:
+        frappe.throw("No se pudieron extraer paths del SVG para nesting.")
+
+    bbox_h_units = max_y - min_y
+    if bbox_h_units <= 0:
+        bbox_h_units = 1.0
+
+    # factor unidadesSVG → mm (en vertical)
+    factor = float(height_mm) / float(bbox_h_units)
+
+    lines = []
+    min_x = float("inf")
+    for pts in paths:
+        pts_mm = []
+        for x, y in pts:
+            xx = x * factor
+            yy = (y - min_y) * factor  # bottom = 0 mm
+            pts_mm.append((xx, yy))
+            if xx < min_x:
+                min_x = xx
+        if len(pts_mm) >= 2:
+            lines.append(LineString(pts_mm))
+
+    if not lines:
+        frappe.throw("No se pudieron construir líneas del SVG.")
+
+    # Normalizar X para que arranque en 0 (no afecta al stepY)
+    shift_x = -min_x if min_x not in (float("inf"), float("-inf")) else 0.0
+    if shift_x:
+        lines = [shp_translate(ls, xoff=shift_x, yoff=0.0) for ls in lines]
+
+    # Buffer de cuchilla y unión
+    buffered = [ls.buffer(TOOL_RADIUS_MM, join_style=2) for ls in lines]
+    solid = unary_union(buffered)
+
+    return solid
 
 
-def _paths_to_int(paths):
-    out = []
-    for path in paths:
-        out.append(
-            [(int(round(x * SCALE)), int(round(y * SCALE))) for x, y in path]
-        )
-    return out
+# ---------------------------------------------------------
+# 3) Buscar stepY mínimo tête-bêche con Shapely
+# ---------------------------------------------------------
 
-
-def _has_overlap(paths_a, paths_b_shifted):
-    pc = pyclipper.Pyclipper()
-    pc.AddPaths(paths_a, pyclipper.PT_SUBJECT, True)
-    pc.AddPaths(paths_b_shifted, pyclipper.PT_CLIP, True)
-    sol = pc.Execute(
-        pyclipper.CT_INTERSECTION,
-        pyclipper.PFT_NONZERO,
-        pyclipper.PFT_NONZERO,
-    )
-    return bool(sol)
-
-
-def _min_dy_units(paths_a, paths_b):
+def _min_step_y_tetebeche_mm(svg_str, height_mm, gap_y_mm):
     """
-    Busca el mínimo desplazamiento dy (en unidades SVG) tal que
-    A ∩ (B + dy) == ∅ usando búsqueda binaria.
+    Calcula el stepY mínimo (en mm) para patrón tête-bêche 180°,
+    de modo que no haya solape de sólidos (buffer de cuchilla).
     """
-    paths_a_int = _paths_to_int(paths_a)
-    paths_b_int_base = _paths_to_int(paths_b)
+    solid_up = _svg_to_solid_mm(svg_str, height_mm)
 
-    # cota superior: ~1.5× altura del bbox
-    min_y = min(y for path in (paths_a + paths_b) for _, y in path)
-    max_y = max(y for path in (paths_a + paths_b) for _, y in path)
-    bbox_h = max_y - min_y or 1.0
+    # Normalizar a bbox con minY=0
+    minx, miny, maxx, maxy = solid_up.bounds
+    solid_up = shp_translate(solid_up, xoff=-minx, yoff=-miny)
+    minx, miny, maxx, maxy = solid_up.bounds
+    h = maxy - miny
 
-    hi = int(math.ceil(bbox_h * 1.5 * SCALE))
-    lo = 0
+    if h <= 0:
+        # fallback: altura nominal + gap
+        return float(height_mm) + float(gap_y_mm)
 
-    def shifted(dy_int):
-        return [[(x, y + dy_int) for x, y in path] for path in paths_b_int_base]
+    cx = (minx + maxx) * 0.5
+    cy = (miny + maxy) * 0.5
 
-    # si ya sin desplazar no hay solape, el paso mínimo es 0
-    if not _has_overlap(paths_a_int, shifted(0)):
-        return 0.0
+    # Sólido invertido 180° sobre el centro
+    solid_down = shp_rotate(solid_up, 180.0, origin=(cx, cy), use_radians=False)
 
-    while hi - lo > 1:
-        mid = (lo + hi) // 2
-        if _has_overlap(paths_a_int, shifted(mid)):
+    # Si ya no se solapan con dy=0 (muy raro), devolvemos altura + gap
+    if solid_up.buffer(-CLEAR_TOL_MM).disjoint(
+        solid_down.buffer(-CLEAR_TOL_MM)
+    ):
+        return float(h) + float(gap_y_mm)
+
+    lo = 0.0
+    hi = h  # cota máxima: una altura completa entre centros
+
+    # Búsqueda binaria en dy
+    for _ in range(40):  # precisión sub-micrón en la práctica
+        mid = (lo + hi) * 0.5
+        test = shp_translate(solid_down, xoff=0.0, yoff=mid)
+        # Checamos intersección con un pequeño "shrink" para evitar ruido numérico
+        if solid_up.buffer(-CLEAR_TOL_MM).intersects(
+            test.buffer(-CLEAR_TOL_MM)
+        ):
             lo = mid
         else:
             hi = mid
 
-    return hi / SCALE
+    # hi ≈ mínimo dy sin solape; le sumamos gap_y_mm usuario
+    return hi + float(gap_y_mm)
 
+
+# ---------------------------------------------------------
+# 4) API pública que usa el client script
+# ---------------------------------------------------------
 
 @frappe.whitelist()
 def compute_tetebeche_pitch(svg, height_mm, gap_y_mm=0.0, rotation_deg=0):
     """
-    API: calcula el paso Y tête-bêche mínimo en mm.
-
-    svg          -> contenido SVG del troquel
-    height_mm    -> alto del troquel en mm (el que ya usas en el cliente)
-    gap_y_mm     -> gap vertical adicional deseado
-    rotation_deg -> 0 ó 90 (ahora mismo se ignora y se asume
-                    que height_mm ya corresponde a la orientación usada)
-
-    Devuelve: { "step_y_mm": <float> }
+    Devuelve el pitch vertical (stepY) tête-bêche en mm, usando Shapely.
+    Firmas compatibes con el client script actual.
     """
-    paths, min_y, max_y = _parse_svg_to_paths(svg)
-    if not paths:
-        frappe.throw("No se pudieron extraer paths del SVG")
+    try:
+        height_mm = float(height_mm or 0.0)
+        gap_y_mm = float(gap_y_mm or 0.0)
+    except Exception:
+        frappe.throw("height_mm y gap_y_mm deben ser numéricos.")
 
-    up_paths = paths
-    down_paths = _rotate_180(paths, min_y, max_y)
+    if height_mm <= 0:
+        frappe.throw("height_mm debe ser > 0")
 
-    dy_units = _min_dy_units(up_paths, down_paths)
-
-    bbox_h_units = max_y - min_y if (max_y > min_y) else 1.0
-    factor_mm_per_unit = float(height_mm) / float(bbox_h_units)
-
-    step_y_mm = dy_units * factor_mm_per_unit + float(gap_y_mm)
-    return {"step_y_mm": step_y_mm}
-
-
-# ---------------------------------------------------------
-# PARTE 2: papeles por material para el modo "Inventario"
-# ---------------------------------------------------------
-
-@frappe.whitelist()
-def get_papeles_para_material(material: str):
-    """
-    Devuelve la lista de papeles disponibles para el material dado.
-
-    IMPORTANTE:
-    - Ajusta filtros y nombres de campos a tu realidad.
-    - Debe devolver al menos: name, item_name, sheet_width, sheet_height
-      en pulgadas, porque el client script los usa así.
-    """
-
-    papeles = frappe.get_all(
-        "Item",
-        filters={
-            "disabled": 0,
-            "is_stock_item": 1,
-            # Si tienes un campo que relacione el material, ponlo aquí.
-            # Ejemplo:
-            # "material_para_montaje": material,
-        },
-        fields=[
-            "name",
-            "item_name",
-            "sheet_width",
-            "sheet_height",
-        ],
-        # ❌ Nada de expresiones tipo "sheet_width * sheet_height"
-        # ✅ Orden simple por ancho y luego alto
-        order_by="sheet_width desc, sheet_height desc",
-    )
-
-    return papeles
+    step_y = _min_step_y_tetebeche_mm(svg, height_mm, gap_y_mm)
+    return {"step_y_mm": step_y}
