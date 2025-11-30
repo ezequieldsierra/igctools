@@ -247,3 +247,55 @@ def compute_tetebeche_pitch(svg, height_mm, gap_y_mm=0.0, rotation_deg=0):
 
     step_y_mm = dy_units * factor_mm_per_unit + float(gap_y_mm)
     return {'step_y_mm': step_y_mm}
+@frappe.whitelist()
+def get_papeles_para_material(material: str):
+    """
+    Devuelve los formatos de hoja disponibles para el material.
+
+    - Intenta leer el Item con nombre = material.
+    - Si encuentra campos de ancho/alto de hoja (en pulgadas), los usa.
+    - Si no, devuelve una hoja estándar 40\" x 26\" como fallback para que
+      el optimizador no reviente.
+    """
+    sheets = []
+
+    item = None
+    try:
+        item = frappe.get_doc("Item", material)
+    except Exception:
+        item = None
+
+    if item:
+        def _get_field(*names):
+            for n in names:
+                # item.get(n) funciona aunque el campo sea custom
+                val = item.get(n)
+                if val not in (None, "", 0):
+                    try:
+                        return float(val)
+                    except Exception:
+                        pass
+            return None
+
+        # Intenta varios nombres comunes de campos de hoja en pulgadas
+        w_in = _get_field("sheet_width", "ancho_hoja", "ancho_hoja_in")
+        h_in = _get_field("sheet_height", "alto_hoja", "alto_hoja_in")
+
+        if w_in and h_in:
+            sheets.append({
+                "name": item.name,
+                "item_name": item.item_name or item.name,
+                "sheet_width": w_in,
+                "sheet_height": h_in,
+            })
+
+    # Si no se encontró nada en el Item, usamos un formato estándar
+    if not sheets:
+        sheets.append({
+            "name": f"DEFAULT-{material}",
+            "item_name": f"Hoja estándar para {material}",
+            "sheet_width": 40.0,
+            "sheet_height": 26.0,
+        })
+
+    return sheets
