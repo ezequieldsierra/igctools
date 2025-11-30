@@ -1,29 +1,32 @@
 # igctools/api/nesting.py
 
 import math
-import json
 import pyclipper
 import frappe
 import xml.etree.ElementTree as ET
 
-SCALE = 1000  # para convertir a enteros (Clipper trabaja mejor con ints)
+SCALE = 1000  # Clipper trabaja mejor con enteros
 
+
+# ---------------------------------------------------------
+# PARTE 1: utilidades para analizar el SVG y calcular pitch
+# ---------------------------------------------------------
 
 def _parse_svg_to_paths(svg_str):
     """
     Convierte un SVG sencillo de troquel en lista de paths:
-    paths = [ [(x1,y1), (x2,y2), ...], ... ]  en unidades del SVG.
-    Soporta <polygon>, <polyline> y <path> con M/L/H/V/Z.
+    paths = [ [(x1,y1), (x2,y2), ...], ... ] en unidades del SVG.
+    Soporta <polygon>, <polyline> y algo básico de <path>.
     Devuelve paths, min_y, max_y para poder escalar a mm luego.
     """
     root = ET.fromstring(svg_str)
-    # Por si viene con namespace <svg ...>:
+
     def tag_name(el):
-        return el.tag.rsplit('}', 1)[-1].lower()
+        return el.tag.rsplit("}", 1)[-1].lower()
 
     paths = []
-    min_y = float('inf')
-    max_y = float('-inf')
+    min_y = float("inf")
+    max_y = float("-inf")
 
     def add_path(pts):
         nonlocal min_y, max_y
@@ -34,14 +37,16 @@ def _parse_svg_to_paths(svg_str):
             min_y = min(min_y, y)
             max_y = max(max_y, y)
 
-    # polygon / polyline
+    # polygon / polyline / path
     for el in root.iter():
         t = tag_name(el)
-        if t in ('polygon', 'polyline'):
-            pts_attr = el.get('points') or ''
+
+        # <polygon> y <polyline>
+        if t in ("polygon", "polyline"):
+            pts_attr = el.get("points") or ""
             if not pts_attr.strip():
                 continue
-            coords = pts_attr.replace(',', ' ').split()
+            coords = pts_attr.replace(",", " ").split()
             pts = []
             it = iter(coords)
             for xs, ys in zip(it, it):
@@ -53,90 +58,84 @@ def _parse_svg_to_paths(svg_str):
                     continue
             add_path(pts)
 
-        elif t == 'path':
-            d = el.get('d') or ''
+        # soporte muy simple de <path> con M/L y coords absolutas
+        elif t == "path":
+            d = el.get("d") or ""
             if not d.strip():
                 continue
+
+            tokens = []
+            num = ""
+            for ch in d:
+                if ch.upper() in "MLZHV":
+                    if num:
+                        tokens.append(num)
+                        num = ""
+                    tokens.append(ch)
+                elif ch in " ,\t\r\n":
+                    if num:
+                        tokens.append(num)
+                        num = ""
+                else:
+                    num += ch
+            if num:
+                tokens.append(num)
+
             pts = []
+            i = 0
             x = y = 0.0
             start_x = start_y = 0.0
             cmd = None
-            token = ''
-            nums = []
 
-            def flush_numbers():
-                nonlocal nums
-                res = nums
-                nums = []
-                return res
-
-            def read_number(tok):
+            def read_float(tok):
                 try:
                     return float(tok)
                 except Exception:
                     return None
 
-            # parse muy sencillo de M/L/H/V/Z
-            for ch in d:
-                if ch.isalpha():
-                    if token:
-                        n = read_number(token)
-                        if n is not None:
-                            nums.append(n)
-                        token = ''
-                    if cmd is not None and nums:
-                        nums = []
-                    cmd = ch
-                elif ch in ' ,\t\n\r':
-                    if token:
-                        n = read_number(token)
-                        if n is not None:
-                            nums.append(n)
-                        token = ''
-                else:
-                    token += ch
-            if token:
-                n = read_number(token)
-                if n is not None:
-                    nums.append(n)
+            while i < len(tokens):
+                tkn = tokens[i]
+                if tkn.upper() in ("M", "L"):
+                    cmd = tkn
+                    i += 1
+                    continue
+                if tkn.upper() == "Z":
+                    if pts and (pts[0] != pts[-1]):
+                        pts.append(pts[0])
+                    i += 1
+                    continue
 
-            i = 0
-            current_cmd = None
-            while i < len(nums) or current_cmd in ('Z', 'z'):
-                if current_cmd in ('M', 'm', None):
-                    if i + 1 >= len(nums):
-                        break
-                    nx = nums[i]
-                    ny = nums[i + 1]
-                    i += 2
-                    if cmd == 'm':
-                        x += nx
-                        y += ny
-                    else:
-                        x = nx
-                        y = ny
-                    start_x, start_y = x, y
-                    pts.append((x, y))
-                    current_cmd = 'L'
-                elif current_cmd in ('L', 'l'):
-                    if i + 1 >= len(nums):
-                        break
-                    nx = nums[i]
-                    ny = nums[i + 1]
-                    i += 2
-                    if cmd == 'l':
-                        x += nx
-                        y += ny
-                    else:
-                        x = nx
-                        y = ny
-                    pts.append((x, y))
-                else:
+                if cmd is None:
+                    i += 1
+                    continue
+
+                # coordenadas X,Y
+                if i + 1 >= len(tokens):
                     break
+                nx = read_float(tokens[i])
+                ny = read_float(tokens[i + 1])
+                i += 2
+                if nx is None or ny is None:
+                    continue
+
+                if cmd == "m":
+                    x += nx
+                    y += ny
+                elif cmd == "l":
+                    x += nx
+                    y += ny
+                else:
+                    x = nx
+                    y = ny
+
+                if cmd.upper() == "M":
+                    start_x, start_y = x, y
+
+                pts.append((x, y))
 
             add_path(pts)
 
-    if min_y == float('inf'):
+    if min_y == float("inf"):
         min_y = 0.0
         max_y = 0.0
 
@@ -145,20 +144,14 @@ def _parse_svg_to_paths(svg_str):
 
 def _rotate_180(paths, min_y, max_y):
     """
-    Rota 180° alrededor del centro del bbox.
-    En coordenadas del SVG.
+    Rota 180° alrededor del centro vertical del bbox.
     """
     cy = (min_y + max_y) * 0.5
-
     rotated = []
     for path in paths:
         new_path = []
         for x, y in path:
-            # rotar 180° alrededor de (cx,cy):
-            # x' = 2*cx - x, y' = 2*cy - y
-            # Como no nos importa X para el stepY, se puede dejar igual,
-            # pero hacemos la rotación completa para ser correctos.
-            nx = x  # si quieres mantener X igual, deja simplemente x
+            nx = x
             ny = 2 * cy - y
             new_path.append((nx, ny))
         rotated.append(new_path)
@@ -168,7 +161,9 @@ def _rotate_180(paths, min_y, max_y):
 def _paths_to_int(paths):
     out = []
     for path in paths:
-        out.append([(int(round(x * SCALE)), int(round(y * SCALE))) for x, y in path])
+        out.append(
+            [(int(round(x * SCALE)), int(round(y * SCALE))) for x, y in path]
+        )
     return out
 
 
@@ -176,7 +171,11 @@ def _has_overlap(paths_a, paths_b_shifted):
     pc = pyclipper.Pyclipper()
     pc.AddPaths(paths_a, pyclipper.PT_SUBJECT, True)
     pc.AddPaths(paths_b_shifted, pyclipper.PT_CLIP, True)
-    sol = pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+    sol = pc.Execute(
+        pyclipper.CT_INTERSECTION,
+        pyclipper.PFT_NONZERO,
+        pyclipper.PFT_NONZERO,
+    )
     return bool(sol)
 
 
@@ -188,24 +187,22 @@ def _min_dy_units(paths_a, paths_b):
     paths_a_int = _paths_to_int(paths_a)
     paths_b_int_base = _paths_to_int(paths_b)
 
-    # cota superior: altura del bbox * 1.5
-    min_y = min(y for path in paths_a + paths_b for _, y in path)
-    max_y = max(y for path in paths_a + paths_b for _, y in path)
-    bbox_h = max_y - min_y
+    # cota superior: ~1.5× altura del bbox
+    min_y = min(y for path in (paths_a + paths_b) for _, y in path)
+    max_y = max(y for path in (paths_a + paths_b) for _, y in path)
+    bbox_h = max_y - min_y or 1.0
+
     hi = int(math.ceil(bbox_h * 1.5 * SCALE))
     lo = 0
 
     def shifted(dy_int):
-        shifted_paths = []
-        for path in paths_b_int_base:
-            shifted_paths.append([(x, y + dy_int) for x, y in path])
-        return shifted_paths
+        return [[(x, y + dy_int) for x, y in path] for path in paths_b_int_base]
 
-    # si ya sin desplazar no hay solape, paso mínimo es 0
+    # si ya sin desplazar no hay solape, el paso mínimo es 0
     if not _has_overlap(paths_a_int, shifted(0)):
         return 0.0
 
-    while hi - lo > 1:  # resolución a 1/SCALE unidades
+    while hi - lo > 1:
         mid = (lo + hi) // 2
         if _has_overlap(paths_a_int, shifted(mid)):
             lo = mid
@@ -219,83 +216,68 @@ def _min_dy_units(paths_a, paths_b):
 def compute_tetebeche_pitch(svg, height_mm, gap_y_mm=0.0, rotation_deg=0):
     """
     API: calcula el paso Y tête-bêche mínimo en mm.
+
     svg          -> contenido SVG del troquel
     height_mm    -> alto del troquel en mm (el que ya usas en el cliente)
     gap_y_mm     -> gap vertical adicional deseado
-    rotation_deg -> 0 ó 90 (por si quieres trabajar con el troquel rotado)
+    rotation_deg -> 0 ó 90 (ahora mismo se ignora y se asume
+                    que height_mm ya corresponde a la orientación usada)
+
+    Devuelve: { "step_y_mm": <float> }
     """
     paths, min_y, max_y = _parse_svg_to_paths(svg)
     if not paths:
-        frappe.throw('No se pudieron extraer paths del SVG')
+        frappe.throw("No se pudieron extraer paths del SVG")
 
-    # Rotación opcional 90° a nivel de SVG, si la necesitas:
-    # (para simplificar, aquí asumimos que el troquel ya viene en la orientación
-    #  que corresponde a height_mm; si quieres rotar de verdad habría que
-    #  permutar x/y y recalcular bbox).
-
-    # versión normal (arriba)
     up_paths = paths
-    # versión invertida (abajo, 180°)
     down_paths = _rotate_180(paths, min_y, max_y)
 
-    # distancia mínima en unidades SVG
     dy_units = _min_dy_units(up_paths, down_paths)
 
-    # factor de escala de unidades SVG a mm usando la altura real
     bbox_h_units = max_y - min_y if (max_y > min_y) else 1.0
-    factor_mm_per_unit = float(height_mm) / bbox_h_units
+    factor_mm_per_unit = float(height_mm) / float(bbox_h_units)
 
     step_y_mm = dy_units * factor_mm_per_unit + float(gap_y_mm)
-    return {'step_y_mm': step_y_mm}
+    return {"step_y_mm": step_y_mm}
+
+
+# ---------------------------------------------------------
+# PARTE 2: papeles por material para el modo "Inventario"
+# ---------------------------------------------------------
+
 @frappe.whitelist()
 def get_papeles_para_material(material: str):
     """
-    Devuelve los formatos de hoja disponibles para el material.
+    Devuelve la lista de papeles disponibles para el material dado.
 
-    - Intenta leer el Item con nombre = material.
-    - Si encuentra campos de ancho/alto de hoja (en pulgadas), los usa.
-    - Si no, devuelve una hoja estándar 40\" x 26\" como fallback para que
-      el optimizador no reviente.
+    IMPORTANTE:
+    - Ajusta filtros y nombres de campos a tu realidad.
+    - Debe devolver al menos: name, item_name, sheet_width, sheet_height
+      en pulgadas, porque el client script los usa así.
     """
-    sheets = []
 
-    item = None
-    try:
-        item = frappe.get_doc("Item", material)
-    except Exception:
-        item = None
+    # Ajusta esto según tu modelo real.
+    # Versión genérica: todos los Items de tipo hoja que tengan
+    # ancho y alto definidos.
+    papeles = frappe.get_all(
+        "Item",
+        filters={
+            "disabled": 0,
+            "is_stock_item": 1,
+            # Si tienes un campo que relaciona el material, ponlo aquí.
+            # Ejemplo hipotético:
+            # "material_para_montaje": material,
+        },
+        fields=[
+            "name",
+            "item_name",
+            # Ajusta estos nombres a tus custom fields:
+            "sheet_width",
+            "sheet_height",
+        ],
+        order_by="sheet_width * sheet_height desc",
+    )
 
-    if item:
-        def _get_field(*names):
-            for n in names:
-                # item.get(n) funciona aunque el campo sea custom
-                val = item.get(n)
-                if val not in (None, "", 0):
-                    try:
-                        return float(val)
-                    except Exception:
-                        pass
-            return None
-
-        # Intenta varios nombres comunes de campos de hoja en pulgadas
-        w_in = _get_field("sheet_width", "ancho_hoja", "ancho_hoja_in")
-        h_in = _get_field("sheet_height", "alto_hoja", "alto_hoja_in")
-
-        if w_in and h_in:
-            sheets.append({
-                "name": item.name,
-                "item_name": item.item_name or item.name,
-                "sheet_width": w_in,
-                "sheet_height": h_in,
-            })
-
-    # Si no se encontró nada en el Item, usamos un formato estándar
-    if not sheets:
-        sheets.append({
-            "name": f"DEFAULT-{material}",
-            "item_name": f"Hoja estándar para {material}",
-            "sheet_width": 40.0,
-            "sheet_height": 26.0,
-        })
-
-    return sheets
+    # Por si tus campos estuvieran en mm y quieres convertirlos a pulgadas,
+    # puedes adaptar aquí. De momento se devuelve tal cual.
+    return papeles
