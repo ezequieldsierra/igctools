@@ -239,16 +239,22 @@ def compute_tetebeche_pitch(svg, height_mm, width_mm, gap_y_mm=0.0, gap_x_mm=0.0
 # ---------------------------------------------------------
 
 @frappe.whitelist()
-def get_papeles_para_material(material: str):
+def get_papeles_para_material(material: str | None = None):
     """
-    Devuelve la lista de papeles disponibles para el material dado.
+    Devuelve la lista de papeles disponibles cuyo reference_name
+    coincide con el valor del campo 'material' en Generador de Troquel.
     """
+    material = (material or "").strip()
+    if not material:
+        # Si no hay material, no devolvemos nada (para que el JS entre en modo Personalizado)
+        return []
 
     papeles = frappe.get_all(
         "Item",
         filters={
             "disabled": 0,
             "is_stock_item": 1,
+            "reference_name": material,   # <<--- AQUÍ ESTÁ EL FILTRO CLAVE
         },
         fields=[
             "name",
