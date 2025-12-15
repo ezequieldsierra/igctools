@@ -1,3 +1,6 @@
+# Convierte la página 1 de un PDF (base64) a PNG (dataURL) y devuelve el tamaño real en mm para overlay con SVG.
+
+
 import base64
 import re
 import fitz
@@ -43,3 +46,4 @@ def pdf_page1_to_png_dataurl(pdf_b64: str, zoom: float = 2.0):
     "h_mm": h_mm,
     "zoom": z
   }
+
