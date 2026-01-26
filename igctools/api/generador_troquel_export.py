@@ -678,8 +678,10 @@ def export_generador_troquel_dxf_v2(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
+
     if not _HAS_DXF:
         frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
+
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
@@ -772,18 +774,25 @@ def export_generador_troquel_dxf_v2(
             msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": is_closed})
 
         elif tag == "rect":
-            _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            ok = _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
 
         elif tag == "circle":
-            _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            ok = _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
 
         elif tag == "ellipse":
-            _dxf_add_ellipse_as_lwpoly_bulge(msp, el, viewbox, width_mm, height_mm, M, dxfattribs, tol_mm=0.03)
+            ok = _dxf_add_ellipse_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
 
         elif tag == "path":
             d = (el.attrib.get("d", "") or "").strip()
             if not d:
                 continue
+
             try:
                 p = parse_path(d)
             except Exception:
@@ -797,15 +806,53 @@ def export_generador_troquel_dxf_v2(
             for sp in subs:
                 if not sp or len(sp) == 0:
                     continue
-                _dxf_add_path_as_single_lwpoly_bulge(
-                    msp, sp, viewbox, width_mm, height_mm, M, dxfattribs,
-                    tol_mm=0.03,
-                )
+
+                for seg in sp:
+                    if seg is None:
+                        continue
+
+                    cls = seg.__class__.__name__.lower()
+
+                    if cls == "line":
+                        try:
+                            z0 = seg.start
+                            z1 = seg.end
+                            x0, y0 = float(z0.real), float(z0.imag)
+                            x1, y1 = float(z1.real), float(z1.imag)
+                            x0, y0 = _apply_mat(M, x0, y0)
+                            x1, y1 = _apply_mat(M, x1, y1)
+                            X0, Y0 = _vb_to_mm(viewbox, width_mm, height_mm, x0, y0)
+                            X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
+                            msp.add_line((X0, Y0), (X1, Y1), dxfattribs=dxfattribs)
+                        except Exception:
+                            pass
+                        continue
+
+                    if cls == "arc":
+                        ok = _dxf_add_arc_from_svgpathtools_arc(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        if ok:
+                            continue
+                        ok2 = _dxf_add_arc_from_segment_3pt(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        if ok2:
+                            continue
+                        _dxf_add_spline_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, fit_points=18)
+                        continue
+
+                    if cls == "cubicbezier":
+                        _dxf_add_spline_from_cubic(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        continue
+
+                    if cls == "quadraticbezier":
+                        _dxf_add_spline_from_quadratic(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        continue
+
+                    _dxf_add_spline_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, fit_points=18)
 
     text_buf = StringIO()
     doc.write(text_buf)
-    out = text_buf.getvalue().encode("utf-8")
+    dxf_text = text_buf.getvalue()
     text_buf.close()
+    out = dxf_text.encode("utf-8")
 
     if not filename:
         filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.dxf"
@@ -827,118 +874,6 @@ def export_generador_troquel_dxf_v2(
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
-def _dxf_add_path_as_single_lwpoly_bulge(msp, sp, viewbox, width_mm, height_mm, M, dxfattribs, tol_mm=0.03):
-    pts, bulges = _sample_path_to_bulge_poly(sp, viewbox, width_mm, height_mm, M, tol_mm=tol_mm)
-    if not pts or len(pts) < 2:
-        return
-    closed = _is_close_pt(pts[0], pts[-1], eps=0.02)
-    if closed:
-        pts = pts[:-1]
-        bulges = bulges[:-1] if len(bulges) == len(pts) + 1 else bulges
-    if len(bulges) != len(pts):
-        bulges = [0.0] * len(pts)
-    msp.add_lwpolyline(
-        pts,
-        format="xyb",
-        dxfattribs={**dxfattribs, "closed": bool(closed)},
-    )
-
-
-def _sample_path_to_bulge_poly(sp, viewbox, width_mm, height_mm, M, tol_mm=0.03):
-    def to_mm(z):
-        x, y = float(z.real), float(z.imag)
-        x, y = _apply_mat(M, x, y)
-        return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
-
-    n_total = 0
-    for seg in sp:
-        cls = seg.__class__.__name__.lower()
-        if cls == "line":
-            n_total += 1
-        else:
-            n_total += 16
-
-    n_total = max(32, min(800, n_total * 6))
-
-    raw = []
-    for i in range(n_total + 1):
-        t = i / n_total
-        z = sp.point(t)
-        p = to_mm(z)
-        if not raw or (abs(p[0] - raw[-1][0]) > 1e-6 or abs(p[1] - raw[-1][1]) > 1e-6):
-            raw.append(p)
-
-    if len(raw) < 2:
-        return [], []
-
-    pts = [raw[0]]
-    bulges = [0.0]
-
-    i = 0
-    while i < len(raw) - 1:
-        if i + 2 >= len(raw):
-            pts.append(raw[i + 1])
-            bulges.append(0.0)
-            break
-
-        best_j = None
-        best = None
-        max_j = min(len(raw) - 1, i + 60)
-
-        for j in range(i + 2, max_j + 1):
-            p0 = raw[i]
-            pm = raw[(i + j) // 2]
-            p2 = raw[j]
-            c = _circumcenter(p0, pm, p2)
-            if not c:
-                continue
-            cx, cy = c
-            r = math.hypot(p0[0] - cx, p0[1] - cy)
-            if r < 1e-6:
-                continue
-
-            ok = True
-            for k in range(i + 1, j):
-                pk = raw[k]
-                dr = abs(math.hypot(pk[0] - cx, pk[1] - cy) - r)
-                if dr > tol_mm:
-                    ok = False
-                    break
-            if not ok:
-                continue
-
-            ang0 = math.atan2(p0[1] - cy, p0[0] - cx)
-            ang2 = math.atan2(p2[1] - cy, p2[0] - cx)
-            angm = math.atan2(pm[1] - cy, pm[0] - cx)
-            ccw = _is_between_ccw_rad(ang0, ang2, angm)
-
-            dtheta = _angle_delta(ang0, ang2, ccw=ccw)
-            if abs(dtheta) < 1e-6:
-                continue
-
-            bulge = math.tan(dtheta / 4.0)
-            if not ccw:
-                bulge = -bulge
-
-            best_j = j
-            best = (p2, bulge)
-
-        if best_j is not None:
-            p2, b = best
-            pts.append(p2)
-            bulges.append(float(b))
-            i = best_j
-        else:
-            pts.append(raw[i + 1])
-            bulges.append(0.0)
-            i += 1
-
-    if len(pts) >= 2 and _is_close_pt(pts[0], pts[-1], eps=0.02):
-        bulges[-1] = 0.0
-
-    return pts, bulges
-
-
 def _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
     try:
         x = float(el.attrib.get("x", "0") or 0.0)
@@ -946,7 +881,7 @@ def _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
         w = float(el.attrib.get("width", "0") or 0.0)
         h = float(el.attrib.get("height", "0") or 0.0)
         if w <= 0 or h <= 0:
-            return
+            return False
         pts_u = [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
         pts = []
         for (px, py) in pts_u:
@@ -955,8 +890,10 @@ def _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
             pts.append((X, Y))
         if len(pts) >= 2:
             msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": True})
+            return True
+        return False
     except Exception:
-        return
+        return False
 
 
 def _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
@@ -965,34 +902,42 @@ def _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
         cy = float(el.attrib.get("cy", "0") or 0.0)
         r = float(el.attrib.get("r", "0") or 0.0)
         if r <= 0:
-            return
+            return False
 
         sx, sy = _mat_scales(M)
-        x, y = _apply_mat(M, cx, cy)
-        X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
-
-        vbw = float(viewbox[2])
-        scale_u_to_mm = (float(width_mm) / float(vbw)) if float(vbw) else 1.0
         if abs(sx - sy) <= max(1e-6, 0.002 * max(abs(sx), abs(sy))):
+            x, y = _apply_mat(M, cx, cy)
+            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+            vbw = float(viewbox[2])
+            scale_u_to_mm = (float(width_mm) / float(vbw)) if float(vbw) else 1.0
             R = abs(r * sx) * scale_u_to_mm
+
             if R > 0:
                 msp.add_circle((X, Y), R, dxfattribs=dxfattribs)
-                return
+                return True
 
-        _dxf_add_ellipse_like_poly(msp, cx, cy, r, r, viewbox, width_mm, height_mm, M, dxfattribs)
+        return _dxf_add_ellipse_like_poly(msp, cx, cy, r, r, viewbox, width_mm, height_mm, M, dxfattribs)
     except Exception:
-        return
+        return False
 
 
-def _dxf_add_ellipse_as_lwpoly_bulge(msp, el, viewbox, width_mm, height_mm, M, dxfattribs, tol_mm=0.03):
+def _dxf_add_ellipse_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
     try:
         cx = float(el.attrib.get("cx", "0") or 0.0)
         cy = float(el.attrib.get("cy", "0") or 0.0)
         rx = float(el.attrib.get("rx", "0") or 0.0)
         ry = float(el.attrib.get("ry", "0") or 0.0)
         if rx <= 0 or ry <= 0:
-            return
-        steps = 220
+            return False
+        return _dxf_add_ellipse_like_poly(msp, cx, cy, rx, ry, viewbox, width_mm, height_mm, M, dxfattribs)
+    except Exception:
+        return False
+
+
+def _dxf_add_ellipse_like_poly(msp, cx, cy, rx, ry, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        steps = 180
         pts = []
         for i in range(steps + 1):
             t = (2.0 * math.pi * i) / steps
@@ -1002,84 +947,173 @@ def _dxf_add_ellipse_as_lwpoly_bulge(msp, el, viewbox, width_mm, height_mm, M, d
             X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
             if not pts or abs(X - pts[-1][0]) > 1e-6 or abs(Y - pts[-1][1]) > 1e-6:
                 pts.append((X, Y))
-        if len(pts) < 3:
-            return
-        fake_path_pts = pts
-        poly_pts, poly_b = _points_to_bulge_poly(fake_path_pts, tol_mm=tol_mm)
-        if not poly_pts or len(poly_pts) < 3:
-            return
-        closed = _is_close_pt(poly_pts[0], poly_pts[-1], eps=0.02)
-        if closed:
-            poly_pts = poly_pts[:-1]
-            poly_b = poly_b[:-1]
-        msp.add_lwpolyline(poly_pts, format="xyb", dxfattribs={**dxfattribs, "closed": True})
+        if len(pts) >= 2:
+            msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": True})
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _dxf_add_arc_from_svgpathtools_arc(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.point(0.0)
+        zm = seg.point(0.5)
+        z1 = seg.point(1.0)
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        pm = pt_mm(zm)
+        p1 = pt_mm(z1)
+
+        cxcy = _circumcenter(p0, pm, p1)
+        if not cxcy:
+            return False
+        cx, cy = cxcy
+
+        r0 = math.hypot(p0[0] - cx, p0[1] - cy)
+        r1 = math.hypot(pm[0] - cx, pm[1] - cy)
+        r2 = math.hypot(p1[0] - cx, p1[1] - cy)
+
+        if r0 < 1e-6:
+            return False
+        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.03, r0 * 0.0025):
+            return False
+
+        a0 = _ang_deg(cx, cy, p0[0], p0[1])
+        am = _ang_deg(cx, cy, pm[0], pm[1])
+        a2 = _ang_deg(cx, cy, p1[0], p1[1])
+
+        ccw = _is_between_ccw(a0, a2, am)
+        if ccw:
+            start_angle = a0
+            end_angle = a2
+        else:
+            start_angle = a2
+            end_angle = a0
+
+        msp.add_arc((cx, cy), r0, start_angle, end_angle, dxfattribs=dxfattribs)
+        return True
+    except Exception:
+        return False
+
+
+def _dxf_add_arc_from_segment_3pt(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.point(0.0)
+        z1 = seg.point(0.5)
+        z2 = seg.point(1.0)
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        pm = pt_mm(z1)
+        p2 = pt_mm(z2)
+
+        cxcy = _circumcenter(p0, pm, p2)
+        if not cxcy:
+            return False
+        cx, cy = cxcy
+
+        r0 = math.hypot(p0[0] - cx, p0[1] - cy)
+        r1 = math.hypot(pm[0] - cx, pm[1] - cy)
+        r2 = math.hypot(p2[0] - cx, p2[1] - cy)
+
+        if r0 < 1e-6:
+            return False
+        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.03, r0 * 0.0025):
+            return False
+
+        a0 = _ang_deg(cx, cy, p0[0], p0[1])
+        am = _ang_deg(cx, cy, pm[0], pm[1])
+        a2 = _ang_deg(cx, cy, p2[0], p2[1])
+
+        ccw = _is_between_ccw(a0, a2, am)
+        if ccw:
+            start_angle = a0
+            end_angle = a2
+        else:
+            start_angle = a2
+            end_angle = a0
+
+        msp.add_arc((cx, cy), r0, start_angle, end_angle, dxfattribs=dxfattribs)
+        return True
+    except Exception:
+        return False
+
+
+def _dxf_add_spline_from_cubic(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.start
+        z1 = seg.control1
+        z2 = seg.control2
+        z3 = seg.end
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        p1 = pt_mm(z1)
+        p2 = pt_mm(z2)
+        p3 = pt_mm(z3)
+
+        msp.add_spline(control_points=[p0, p1, p2, p3], degree=3, dxfattribs=dxfattribs)
+    except Exception:
+        _dxf_add_spline_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, fit_points=18)
+
+
+def _dxf_add_spline_from_quadratic(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.start
+        z1 = seg.control
+        z2 = seg.end
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        p1 = pt_mm(z1)
+        p2 = pt_mm(z2)
+
+        msp.add_spline(control_points=[p0, p1, p2], degree=2, dxfattribs=dxfattribs)
+    except Exception:
+        _dxf_add_spline_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, fit_points=18)
+
+
+def _dxf_add_spline_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, fit_points=18):
+    try:
+        n = int(fit_points or 18)
+        if n < 6:
+            n = 6
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        pts = []
+        for i in range(n + 1):
+            t = i / n
+            z = seg.point(t)
+            p = pt_mm(z)
+            if not pts or abs(p[0] - pts[-1][0]) > 1e-9 or abs(p[1] - pts[-1][1]) > 1e-9:
+                pts.append(p)
+
+        if len(pts) >= 2:
+            msp.add_spline(fit_points=pts, degree=3, dxfattribs=dxfattribs)
     except Exception:
         return
-
-
-def _points_to_bulge_poly(raw, tol_mm=0.03):
-    if len(raw) < 2:
-        return [], []
-    pts = [raw[0]]
-    bulges = [0.0]
-    i = 0
-    while i < len(raw) - 1:
-        if i + 2 >= len(raw):
-            pts.append(raw[i + 1])
-            bulges.append(0.0)
-            break
-        best_j = None
-        best = None
-        max_j = min(len(raw) - 1, i + 60)
-        for j in range(i + 2, max_j + 1):
-            p0 = raw[i]
-            pm = raw[(i + j) // 2]
-            p2 = raw[j]
-            c = _circumcenter(p0, pm, p2)
-            if not c:
-                continue
-            cx, cy = c
-            r = math.hypot(p0[0] - cx, p0[1] - cy)
-            if r < 1e-6:
-                continue
-            ok = True
-            for k in range(i + 1, j):
-                pk = raw[k]
-                dr = abs(math.hypot(pk[0] - cx, pk[1] - cy) - r)
-                if dr > tol_mm:
-                    ok = False
-                    break
-            if not ok:
-                continue
-            ang0 = math.atan2(p0[1] - cy, p0[0] - cx)
-            ang2 = math.atan2(p2[1] - cy, p2[0] - cx)
-            angm = math.atan2(pm[1] - cy, pm[0] - cx)
-            ccw = _is_between_ccw_rad(ang0, ang2, angm)
-            dtheta = _angle_delta(ang0, ang2, ccw=ccw)
-            if abs(dtheta) < 1e-6:
-                continue
-            bulge = math.tan(dtheta / 4.0)
-            if not ccw:
-                bulge = -bulge
-            best_j = j
-            best = (p2, bulge)
-        if best_j is not None:
-            p2, b = best
-            pts.append(p2)
-            bulges.append(float(b))
-            i = best_j
-        else:
-            pts.append(raw[i + 1])
-            bulges.append(0.0)
-            i += 1
-    return pts, bulges
-
-
-def _ensure_dxf_layers(doc):
-    for lname, color in DXF_LAYER_COLOR.items():
-        up = lname.upper()
-        if up not in doc.layers:
-            doc.layers.add(up, color=color)
 
 
 def _get_svg_mm_size(svg: str):
@@ -1092,6 +1126,13 @@ def _get_svg_mm_size(svg: str):
             except Exception:
                 pass
     return 100.0, 100.0
+
+
+def _ensure_dxf_layers(doc):
+    for lname, color in DXF_LAYER_COLOR.items():
+        up = lname.upper()
+        if up not in doc.layers:
+            doc.layers.add(up, color=color)
 
 
 def _is_in_defs(el):
@@ -1125,6 +1166,19 @@ def _nearest_layer(el):
     return ""
 
 
+def _mul(A, B):
+    a, b, c, d, e, f = A
+    a2, b2, c2, d2, e2, f2 = B
+    return (
+        a * a2 + c * b2,
+        b * a2 + d * b2,
+        a * c2 + c * d2,
+        b * c2 + d * d2,
+        a * e2 + c * f2 + e,
+        b * e2 + d * f2 + f,
+    )
+
+
 def _parse_transform_attr(s: str):
     M = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     if not s:
@@ -1142,6 +1196,11 @@ def _parse_transform_attr(s: str):
             sx = nums[0] if nums else 1.0
             sy = nums[1] if len(nums) > 1 else sx
             m = (sx, 0.0, 0.0, sy, 0.0, 0.0)
+        elif fnl == "rotate":
+            deg = nums[0] if nums else 0.0
+            rad = math.radians(float(deg))
+            c, s2 = math.cos(rad), math.sin(rad)
+            m = (c, s2, -s2, c, 0.0, 0.0)
         else:
             continue
         M = _mul(M, m)
@@ -1151,30 +1210,19 @@ def _parse_transform_attr(s: str):
 def _collect_ancestors_transform(el):
     M = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     cur = el
-    while True:
+    try:
+        parent = cur.getparent()
+    except Exception:
+        parent = None
+    while parent is not None:
+        tf = parent.attrib.get("transform")
+        if tf:
+            M = _mul(_parse_transform_attr(tf), M)
         try:
-            parent = cur.getparent()
+            parent = parent.getparent()
         except Exception:
             parent = None
-        if parent is None:
-            break
-        t = _parse_transform_attr(parent.attrib.get("transform", ""))
-        M = _mul(t, M)
-        cur = parent
     return M
-
-
-def _mul(A, B):
-    a, b, c, d, e, f = A
-    a2, b2, c2, d2, e2, f2 = B
-    return (
-        a * a2 + c * b2,
-        b * a2 + d * b2,
-        a * c2 + c * d2,
-        b * c2 + d * d2,
-        a * e2 + c * f2 + e,
-        b * e2 + d * f2 + f,
-    )
 
 
 def _apply_mat(M, x, y):
@@ -1187,8 +1235,8 @@ def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
     sx = float(width_mm) / float(vbw) if float(vbw) else 1.0
     sy = float(height_mm) / float(vbh) if float(vbh) else 1.0
     X = (x - minx) * sx
-    Y = (y - miny) * sy
-    return (X, Y)
+    Y = (miny + vbh - y) * sy
+    return X, Y
 
 
 def _mat_scales(M):
@@ -1217,30 +1265,14 @@ def _circumcenter(p1, p2, p3):
     return (ux, uy)
 
 
-def _is_between_ccw_rad(a0, a1, am):
-    twopi = 2.0 * math.pi
-    a0 = a0 % twopi
-    a1 = a1 % twopi
-    am = am % twopi
+def _ang_deg(cx, cy, px, py):
+    return (math.degrees(math.atan2(py - cy, px - cx)) + 360.0) % 360.0
+
+
+def _is_between_ccw(a0, a1, am):
+    a0 = a0 % 360.0
+    a1 = a1 % 360.0
+    am = am % 360.0
     if a0 <= a1:
         return a0 <= am <= a1
     return (am >= a0) or (am <= a1)
-
-
-def _angle_delta(a0, a1, ccw=True):
-    twopi = 2.0 * math.pi
-    a0 = a0 % twopi
-    a1 = a1 % twopi
-    if ccw:
-        d = a1 - a0
-        if d < 0:
-            d += twopi
-        return d
-    d = a0 - a1
-    if d < 0:
-        d += twopi
-    return d
-
-
-def _is_close_pt(p, q, eps=0.02):
-    return (abs(p[0] - q[0]) <= eps) and (abs(p[1] - q[1]) <= eps)
