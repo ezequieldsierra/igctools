@@ -361,7 +361,6 @@ def _remove_bbox_rects(root, viewbox, tol=1e-6):
     from lxml import etree
     minx, miny, vbw, vbh = viewbox
     removed = 0
-
     for el in list(root.iter()):
         try:
             tag = etree.QName(el).localname.lower()
@@ -401,8 +400,33 @@ def _remove_bbox_rects(root, viewbox, tol=1e-6):
             if parent is not None:
                 parent.remove(el)
                 removed += 1
-
     return removed
+
+
+def _canon_pair(a, b):
+    return (a, b) if a <= b else (b, a)
+
+
+def _canon_line_key(x1, y1, x2, y2, nd=6):
+    a = (_roundN(x1, nd), _roundN(y1, nd))
+    b = (_roundN(x2, nd), _roundN(y2, nd))
+    a, b = _canon_pair(a, b)
+    return ("L", a, b)
+
+
+def _canon_arc_key(cx, cy, r, sx, sy, ex, ey, nd=6):
+    c = (_roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd))
+    s = (_roundN(sx, nd), _roundN(sy, nd))
+    e = (_roundN(ex, nd), _roundN(ey, nd))
+    k1 = ("A", c, s, e)
+    k2 = ("A", c, e, s)
+    return min(k1, k2)
+
+
+def _canon_bezier_key(pts, nd=6):
+    p = tuple((_roundN(x, nd), _roundN(y, nd)) for x, y in pts)
+    pr = tuple(reversed(p))
+    return ("B", min(p, pr))
 
 
 def _path_signature_geom(d: str, M, nd=6):
@@ -410,7 +434,7 @@ def _path_signature_geom(d: str, M, nd=6):
         dd = re.sub(r"\s+", " ", (d or "").strip())
         dd = re.sub(r"\s*,\s*", ",", dd)
         mm = tuple(_roundN(v, nd) for v in (M or (1, 0, 0, 1, 0, 0)))
-        return ("path_raw", mm, dd)
+        return ("RAW", mm, dd)
 
     try:
         p = parse_path(d)
@@ -418,20 +442,17 @@ def _path_signature_geom(d: str, M, nd=6):
         dd = re.sub(r"\s+", " ", (d or "").strip())
         dd = re.sub(r"\s*,\s*", ",", dd)
         mm = tuple(_roundN(v, nd) for v in (M or (1, 0, 0, 1, 0, 0)))
-        return ("path_raw", mm, dd)
+        return ("RAW", mm, dd)
 
-    sig = []
+    seg_keys = []
+
     for seg in p:
         if isinstance(seg, _SP_Line):
             x1, y1 = float(seg.start.real), float(seg.start.imag)
             x2, y2 = float(seg.end.real), float(seg.end.imag)
             x1, y1 = _apply_mat(M, x1, y1)
             x2, y2 = _apply_mat(M, x2, y2)
-            a = (_roundN(x1, nd), _roundN(y1, nd))
-            b = (_roundN(x2, nd), _roundN(y2, nd))
-            if b < a:
-                a, b = b, a
-            sig.append(("L", a, b))
+            seg_keys.append(_canon_line_key(x1, y1, x2, y2, nd=nd))
 
         elif isinstance(seg, _SP_Arc):
             c = seg.center
@@ -450,24 +471,41 @@ def _path_signature_geom(d: str, M, nd=6):
             if abs(sxm - sym) < 1e-9:
                 r = r * sxm
 
-            sig.append(("A",
-                (_roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd)),
-                (_roundN(sx, nd), _roundN(sy, nd)),
-                (_roundN(ex, nd), _roundN(ey, nd)),
-                bool(getattr(seg, "sweep", True))
-            ))
+            seg_keys.append(_canon_arc_key(cx, cy, r, sx, sy, ex, ey, nd=nd))
+
+        elif isinstance(seg, (_SP_Cubic, _SP_Quad)):
+            pts = []
+            z0 = seg.start
+            z1 = seg.end
+            pts.append((float(z0.real), float(z0.imag)))
+            if isinstance(seg, _SP_Cubic):
+                c1 = seg.control1
+                c2 = seg.control2
+                pts.append((float(c1.real), float(c1.imag)))
+                pts.append((float(c2.real), float(c2.imag)))
+            else:
+                c1 = seg.control
+                pts.append((float(c1.real), float(c1.imag)))
+            pts.append((float(z1.real), float(z1.imag)))
+
+            tpts = []
+            for x, y in pts:
+                X, Y = _apply_mat(M, x, y)
+                tpts.append((X, Y))
+            seg_keys.append(_canon_bezier_key(tpts, nd=nd))
 
         else:
             pts = []
-            for i in range(0, 25):
-                t = i / 24.0
+            for i in range(0, 33):
+                t = i / 32.0
                 z = seg.point(t)
                 x, y = float(z.real), float(z.imag)
                 x, y = _apply_mat(M, x, y)
-                pts.append((_roundN(x, nd), _roundN(y, nd)))
-            sig.append(("S", tuple(pts)))
+                pts.append((x, y))
+            seg_keys.append(_canon_bezier_key(pts, nd=nd))
 
-    return ("path_geom", tuple(sig))
+    seg_keys.sort()
+    return ("G", tuple(seg_keys))
 
 
 def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6, drop_bbox=True) -> str:
@@ -503,8 +541,6 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
         if tag not in ("line", "polyline", "polygon", "path", "circle", "ellipse"):
             continue
 
-        layer = (_nearest_layer(el) or "").lower()
-
         M = _parse_transform_attr(el.attrib.get("transform", ""))
         M = _mul(_collect_ancestors_transform(el), M)
 
@@ -518,11 +554,7 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                 y2 = float(el.attrib.get("y2", "0"))
                 x1, y1 = _apply_mat(M, x1, y1)
                 x2, y2 = _apply_mat(M, x2, y2)
-                a = (_roundN(x1, nd), _roundN(y1, nd))
-                b = (_roundN(x2, nd), _roundN(y2, nd))
-                if b < a:
-                    a, b = b, a
-                key = ("line", layer, a, b)
+                key = ("line",) + _canon_line_key(x1, y1, x2, y2, nd=nd)
             except Exception:
                 key = None
 
@@ -538,15 +570,15 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                 if len(parts) != 2:
                     continue
                 try:
-                    x = float(parts[0])
-                    y = float(parts[1])
+                    x = float(parts[0]); y = float(parts[1])
                 except Exception:
                     continue
                 x, y = _apply_mat(M, x, y)
                 pts.append((_roundN(x, nd), _roundN(y, nd)))
-            if not pts:
+            if len(pts) < 2:
                 continue
-            key = ("poly", layer, (tag == "polygon"), tuple(pts))
+            pr = tuple(reversed(pts))
+            key = ("poly", tag == "polygon", min(tuple(pts), pr))
 
         elif tag == "circle":
             try:
@@ -561,7 +593,7 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                     key = None
                 else:
                     r = r * sxm
-                    key = ("circle", layer, _roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd))
+                    key = ("circle", _roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd))
             except Exception:
                 key = None
 
@@ -573,14 +605,15 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                 ry = float(el.attrib.get("ry", "0"))
                 cx, cy = _apply_mat(M, cx, cy)
                 a, b, c1, d1, e1, f1 = M
-                sxm = math.hypot(a, b)
-                sym = math.hypot(c1, d1)
                 if abs(b) > 1e-12 or abs(c1) > 1e-12:
                     key = None
                 else:
+                    sxm = math.hypot(a, b)
+                    sym = math.hypot(c1, d1)
                     rx = rx * sxm
                     ry = ry * sym
-                    key = ("ellipse", layer, _roundN(cx, nd), _roundN(cy, nd), _roundN(rx, nd), _roundN(ry, nd))
+                    rx, ry = _canon_pair((_roundN(rx, nd),), (_roundN(ry, nd),))
+                    key = ("ellipse", _roundN(cx, nd), _roundN(cy, nd), rx[0], ry[0])
             except Exception:
                 key = None
 
@@ -588,7 +621,7 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
             d = (el.attrib.get("d") or "").strip()
             if not d:
                 continue
-            key = ("path", layer, _path_signature_geom(d, M, nd=nd))
+            key = ("path", _path_signature_geom(d, M, nd=nd))
 
         if not key:
             continue
@@ -607,6 +640,15 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
     return etree.tostring(root, encoding="utf-8", xml_declaration=False).decode("utf-8")
 
 
+def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
+    minx, miny, vbw, vbh = viewbox
+    sx = float(width_mm) / float(vbw)
+    sy = float(height_mm) / float(vbh)
+    X = (x - minx) * sx
+    Y = (miny + vbh - y) * sy
+    return X, Y
+
+
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_pdf(
     docname: str,
@@ -618,12 +660,13 @@ def export_generador_troquel_pdf(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
+
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
     svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
 
     buf = BytesIO()
     cairosvg.svg2pdf(
@@ -666,12 +709,13 @@ def export_generador_troquel_svg(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
+
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
     svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
 
     if not svg_clean.lstrip().startswith("<?xml"):
         svg_clean = '<?xml version="1.0" encoding="UTF-8"?>\n' + svg_clean
@@ -696,15 +740,6 @@ def export_generador_troquel_svg(
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
-def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
-    minx, miny, vbw, vbh = viewbox
-    sx = float(width_mm) / float(vbw)
-    sy = float(height_mm) / float(vbh)
-    X = (x - minx) * sx
-    Y = (miny + vbh - y) * sy
-    return X, Y
-
-
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_dxf(
     docname: str,
@@ -716,8 +751,10 @@ def export_generador_troquel_dxf(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
+
     if not _HAS_DXF:
         frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
+
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
@@ -725,7 +762,7 @@ def export_generador_troquel_dxf(
     parser = etree.XMLParser(remove_comments=True, recover=True)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
     root = etree.fromstring(svg_clean.encode("utf-8"), parser=parser)
 
     vb_attr = root.attrib.get("viewBox")
@@ -759,11 +796,7 @@ def export_generador_troquel_dxf(
         return tuple(parts)
 
     def _add_line(layer_u, lweight, x1, y1, x2, y2):
-        a = (_roundN(x1, 6), _roundN(y1, 6))
-        b = (_roundN(x2, 6), _roundN(y2, 6))
-        if b < a:
-            a, b = b, a
-        kk = _k("L", layer_u, a, b, int(lweight))
+        kk = _k("L", layer_u) + _canon_line_key(x1, y1, x2, y2, nd=6) + (int(lweight),)
         if kk in seen_ent:
             return
         seen_ent.add(kk)
@@ -777,7 +810,11 @@ def export_generador_troquel_dxf(
         msp.add_circle((cx, cy), r, dxfattribs={"layer": layer_u, "lineweight": lweight})
 
     def _add_arc(layer_u, lweight, cx, cy, r, start_deg, end_deg):
-        kk = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), _roundN(start_deg, 6), _roundN(end_deg, 6), int(lweight))
+        a1 = _roundN(start_deg, 6)
+        a2 = _roundN(end_deg, 6)
+        kk1 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), a1, a2, int(lweight))
+        kk2 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), a2, a1, int(lweight))
+        kk = min(kk1, kk2)
         if kk in seen_ent:
             return
         seen_ent.add(kk)
@@ -792,7 +829,8 @@ def export_generador_troquel_dxf(
 
     def _add_spline(layer_u, lweight, fit_pts):
         pts = tuple((_roundN(x, 6), _roundN(y, 6)) for x, y in (fit_pts or []))
-        kk = _k("S", layer_u, pts, int(lweight))
+        pr = tuple(reversed(pts))
+        kk = _k("S", layer_u, min(pts, pr), int(lweight))
         if kk in seen_ent:
             return
         seen_ent.add(kk)
@@ -809,6 +847,7 @@ def export_generador_troquel_dxf(
         layer = (_nearest_layer(el) or "cut").lower()
         if layer == "guide":
             continue
+
         layer_u = layer.upper()
         if layer_u not in doc.layers:
             doc.layers.add(layer_u, color=DXF_LAYER_COLOR.get(layer, 7))
@@ -960,7 +999,7 @@ def export_generador_troquel_dxf(
                     a1 = ang(SX, SY)
                     a2 = ang(EX, EY)
 
-                    if abs((a2 - a1)) < 1e-9 and math.hypot(SX - EX, SY - EY) < 1e-6:
+                    if math.hypot(SX - EX, SY - EY) < 1e-6:
                         _add_circle(layer_u, lweight, CX, CY, R)
                     else:
                         _add_arc(layer_u, lweight, CX, CY, R, a1, a2)
