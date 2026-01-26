@@ -701,6 +701,8 @@ def export_generador_troquel_dxf_v2(
     viewbox = (minx, miny, vbw, vbh)
 
     from ezdxf import units
+    import ezdxf
+
     doc = ezdxf.new("R2010")
     doc.units = units.MM
     doc.header["$INSUNITS"] = 4
@@ -710,6 +712,90 @@ def export_generador_troquel_dxf_v2(
     def lw_from_layer(layer_name: str) -> int:
         mm = LAYER_WIDTH_MM.get(layer_name, 0.20)
         return max(0, min(211, int(round(mm * 100))))
+
+    def _norm_hex(h: str) -> str:
+        s = (h or "").strip().lower()
+        if not s:
+            return ""
+        if s.startswith("#") and len(s) == 4:
+            return f"#{s[1]}{s[1]}{s[2]}{s[2]}{s[3]}{s[3]}"
+        if s.startswith("#") and len(s) == 7:
+            return s
+        return ""
+
+    def _parse_rgb(s: str):
+        m = re.match(r"^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)\s*$", (s or "").strip().lower())
+        if not m:
+            return None
+        r = int(round(float(m.group(1))))
+        g = int(round(float(m.group(2))))
+        b = int(round(float(m.group(3))))
+        a = m.group(4)
+        if a is not None and float(a) <= 0:
+            return None
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+        return (r, g, b)
+
+    def _nearest_style_attr(el, key: str) -> str:
+        cur = el
+        while cur is not None:
+            st = (cur.attrib.get("style") or "").strip()
+            if st:
+                for part in st.split(";"):
+                    if ":" not in part:
+                        continue
+                    k, v = part.split(":", 1)
+                    if k.strip().lower() == key:
+                        return (v or "").strip()
+            try:
+                cur = cur.getparent()
+            except Exception:
+                cur = None
+        return ""
+
+    def _nearest_attr(el, key: str) -> str:
+        cur = el
+        while cur is not None:
+            v = cur.attrib.get(key)
+            if v is not None and str(v).strip() != "":
+                return str(v).strip()
+            try:
+                cur = cur.getparent()
+            except Exception:
+                cur = None
+        return ""
+
+    def _stroke_rgb_for_el(el):
+        s = _nearest_attr(el, "stroke")
+        if not s:
+            s = _nearest_style_attr(el, "stroke")
+        s = (s or "").strip().lower()
+        if not s or s in ("none", "transparent", "currentcolor"):
+            return None
+        if s.startswith("#"):
+            hx = _norm_hex(s)
+            if not hx:
+                return None
+            return (int(hx[1:3], 16), int(hx[3:5], 16), int(hx[5:7], 16))
+        if s.startswith("rgb"):
+            return _parse_rgb(s)
+        if s == "red":
+            return (255, 0, 0)
+        if s == "black":
+            return (0, 0, 0)
+        if s == "white":
+            return (255, 255, 255)
+        if s == "blue":
+            return (0, 0, 255)
+        if s == "green":
+            return (0, 128, 0)
+        return None
+
+    def _dxf_truecolor_int(rgb):
+        r, g, b = rgb
+        return (int(r) << 16) | (int(g) << 8) | int(b)
 
     _ensure_dxf_layers(doc)
 
@@ -734,6 +820,11 @@ def export_generador_troquel_dxf_v2(
 
         lweight = lw_from_layer(layer)
         dxfattribs = {"layer": layer_upper, "lineweight": lweight}
+
+        rgb = _stroke_rgb_for_el(el)
+        if rgb is not None:
+            dxfattribs["true_color"] = _dxf_truecolor_int(rgb)
+            dxfattribs["color"] = 256
 
         if tag == "line":
             try:
@@ -784,7 +875,9 @@ def export_generador_troquel_dxf_v2(
                 continue
 
         elif tag == "ellipse":
-            ok = _dxf_add_ellipse_el_as_arcchain(msp, el, viewbox, width_mm, height_mm, M, dxfattribs, chord_mm=0.15)
+            ok = _dxf_add_ellipse_el_as_arcchain(
+                msp, el, viewbox, width_mm, height_mm, M, dxfattribs, chord_mm=0.15
+            )
             if not ok:
                 continue
 
@@ -830,7 +923,9 @@ def export_generador_troquel_dxf_v2(
                         if ok:
                             continue
 
-                    _dxf_add_arcchain_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, chord_mm=0.20)
+                    _dxf_add_arcchain_from_segment(
+                        msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, chord_mm=0.20
+                    )
 
     text_buf = StringIO()
     doc.write(text_buf)
