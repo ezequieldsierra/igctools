@@ -667,12 +667,7 @@ def export_generador_troquel_dxf(
     frappe.db.commit()
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
-
-
-
-
-
-    @frappe.whitelist(methods=["POST"])
+@frappe.whitelist(methods=["POST"])
 def export_generador_troquel_dxf_v2(
     docname: str,
     svg: str,
@@ -950,5 +945,3 @@ def _is_between_ccw(a0, a1, am):
     if a0 <= a1:
         return (a0 <= am <= a1)
     return (am >= a0) or (am <= a1)
-
-// EOF
