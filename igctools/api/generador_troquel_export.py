@@ -666,3 +666,288 @@ def export_generador_troquel_dxf(
     filedoc.insert(ignore_permissions=True)
     frappe.db.commit()
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
+
+
+
+
+
+
+    @frappe.whitelist(methods=["POST"])
+def export_generador_troquel_dxf_v2(
+    docname: str,
+    svg: str,
+    width_mm: float | None = None,
+    height_mm: float | None = None,
+    filename: str | None = None,
+    is_private: int = 0,
+):
+    if not svg:
+        frappe.throw("SVG requerido.")
+
+    if not _HAS_DXF:
+        frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
+
+    if not width_mm or not height_mm:
+        width_mm, height_mm = _get_svg_mm_size(svg)
+
+    from lxml import etree
+    parser = etree.XMLParser(remove_comments=True, recover=True)
+    root = etree.fromstring(svg.encode("utf-8"), parser=parser)
+
+    vb_attr = root.attrib.get("viewBox")
+    if not vb_attr:
+        minx, miny, vbw, vbh = 0.0, 0.0, float(width_mm), float(height_mm)
+    else:
+        vb = [float(x) for x in re.split(r"[ ,]+", vb_attr.strip()) if x]
+        if len(vb) != 4:
+            frappe.throw("viewBox inválido en SVG.")
+        minx, miny, vbw, vbh = vb
+
+    viewbox = (minx, miny, vbw, vbh)
+
+    from ezdxf import units
+    doc = ezdxf.new("R2010")
+    doc.units = units.MM
+    doc.header["$INSUNITS"] = 4
+    doc.header["$MEASUREMENT"] = 1
+    msp = doc.modelspace()
+
+    def lw_from_layer(layer_name: str) -> int:
+        mm = LAYER_WIDTH_MM.get(layer_name, 0.20)
+        return max(0, min(211, int(round(mm * 100))))
+
+    _ensure_dxf_layers(doc)
+
+    for el in root.iter():
+        if _is_in_defs(el):
+            continue
+
+        tag = etree.QName(el).localname.lower()
+        if tag not in ("line", "polyline", "polygon", "path"):
+            continue
+
+        layer = _nearest_layer(el) or "cut"
+        if layer.lower() == "guide":
+            continue
+
+        layer_upper = layer.upper()
+        if layer_upper not in doc.layers:
+            doc.layers.add(layer_upper, color=DXF_LAYER_COLOR.get(layer, 7))
+
+        M = _parse_transform_attr(el.attrib.get("transform", ""))
+        M = _mul(_collect_ancestors_transform(el), M)
+
+        lweight = lw_from_layer(layer)
+        dxfattribs = {"layer": layer_upper, "lineweight": lweight}
+
+        if tag == "line":
+            try:
+                x1 = float(el.attrib.get("x1", "0"))
+                y1 = float(el.attrib.get("y1", "0"))
+                x2 = float(el.attrib.get("x2", "0"))
+                y2 = float(el.attrib.get("y2", "0"))
+                x1, y1 = _apply_mat(M, x1, y1)
+                x2, y2 = _apply_mat(M, x2, y2)
+                X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
+                X2, Y2 = _vb_to_mm(viewbox, width_mm, height_mm, x2, y2)
+                msp.add_line((X1, Y1), (X2, Y2), dxfattribs=dxfattribs)
+            except Exception:
+                continue
+
+        elif tag in ("polyline", "polygon"):
+            pts_attr = el.attrib.get("points", "").strip()
+            if not pts_attr:
+                continue
+            pts = []
+            for pair in re.split(r"\s+", pts_attr):
+                if not pair.strip():
+                    continue
+                parts = pair.split(",")
+                if len(parts) != 2:
+                    continue
+                try:
+                    x = float(parts[0])
+                    y = float(parts[1])
+                except Exception:
+                    continue
+                x, y = _apply_mat(M, x, y)
+                X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+                pts.append((X, Y))
+            if not pts:
+                continue
+            is_closed = (tag == "polygon")
+            msp.add_lwpolyline(
+                pts,
+                format="xy",
+                dxfattribs={**dxfattribs, "closed": is_closed},
+            )
+
+        elif tag == "path":
+            d = (el.attrib.get("d", "") or "").strip()
+            if not d:
+                continue
+
+            try:
+                p = parse_path(d)
+            except Exception:
+                continue
+
+            try:
+                subs = p.continuous_subpaths()
+            except Exception:
+                subs = [p]
+
+            for sp in subs:
+                if not sp or len(sp) == 0:
+                    continue
+
+                for seg in sp:
+                    if seg is None:
+                        continue
+
+                    if seg.__class__.__name__.lower() == "line":
+                        z0 = seg.start
+                        z1 = seg.end
+                        x0, y0 = float(z0.real), float(z0.imag)
+                        x1, y1 = float(z1.real), float(z1.imag)
+                        x0, y0 = _apply_mat(M, x0, y0)
+                        x1, y1 = _apply_mat(M, x1, y1)
+                        X0, Y0 = _vb_to_mm(viewbox, width_mm, height_mm, x0, y0)
+                        X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
+                        msp.add_line((X0, Y0), (X1, Y1), dxfattribs=dxfattribs)
+                        continue
+
+                    if seg.__class__.__name__.lower() == "arc":
+                        ok = _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        if ok:
+                            continue
+
+                    _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.5)
+
+    text_buf = StringIO()
+    doc.write(text_buf)
+    dxf_text = text_buf.getvalue()
+    text_buf.close()
+    out = dxf_text.encode("utf-8")
+
+    if not filename:
+        filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.dxf"
+    if not filename.lower().endswith(".dxf"):
+        filename += ".dxf"
+
+    filedoc = frappe.get_doc(
+        {
+            "doctype": "File",
+            "file_name": filename,
+            "is_private": int(is_private or 0),
+            "content": out,
+            "attached_to_doctype": "Generador de Troquel",
+            "attached_to_name": docname,
+        }
+    )
+    filedoc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
+
+
+def _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.point(0.0)
+        z1 = seg.point(0.5)
+        z2 = seg.point(1.0)
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        pm = pt_mm(z1)
+        p2 = pt_mm(z2)
+
+        cxcy = _circumcenter(p0, pm, p2)
+        if not cxcy:
+            return False
+        cx, cy = cxcy
+
+        r0 = math.hypot(p0[0] - cx, p0[1] - cy)
+        r1 = math.hypot(pm[0] - cx, pm[1] - cy)
+        r2 = math.hypot(p2[0] - cx, p2[1] - cy)
+
+        if r0 < 1e-6:
+            return False
+        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.02, r0 * 0.002):
+            return False
+
+        a0 = _ang_deg(cx, cy, p0[0], p0[1])
+        am = _ang_deg(cx, cy, pm[0], pm[1])
+        a2 = _ang_deg(cx, cy, p2[0], p2[1])
+
+        ccw = _is_between_ccw(a0, a2, am)
+        if ccw:
+            start_angle = a0
+            end_angle = a2
+        else:
+            start_angle = a2
+            end_angle = a0
+
+        msp.add_arc((cx, cy), r0, start_angle, end_angle, dxfattribs=dxfattribs)
+        return True
+    except Exception:
+        return False
+
+
+def _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.5):
+    try:
+        vbw = float(viewbox[2])
+        step_u = step_mm * (float(vbw) / float(width_mm)) if float(width_mm) else 0.5
+
+        try:
+            L = seg.length(error=1e-3)
+        except Exception:
+            L = 0.0
+
+        n = max(2, int(math.ceil((L if L > 0 else max(abs(vbw), abs(viewbox[3]))) / max(1e-6, step_u))))
+        pts = []
+        for i in range(n + 1):
+            t = i / n
+            z = seg.point(t)
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+            if i == 0 or abs(X - pts[-1][0]) > 1e-6 or abs(Y - pts[-1][1]) > 1e-6:
+                pts.append((X, Y))
+
+        if len(pts) >= 2:
+            msp.add_lwpolyline(pts, format="xy", dxfattribs=dxfattribs)
+    except Exception:
+        return
+
+
+def _circumcenter(p1, p2, p3):
+    x1, y1 = p1
+    x2, y2 = p2
+    x3, y3 = p3
+    d = 2.0 * (x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2))
+    if abs(d) < 1e-12:
+        return None
+    x1s = x1*x1 + y1*y1
+    x2s = x2*x2 + y2*y2
+    x3s = x3*x3 + y3*y3
+    ux = (x1s*(y2-y3) + x2s*(y3-y1) + x3s*(y1-y2)) / d
+    uy = (x1s*(x3-x2) + x2s*(x1-x3) + x3s*(x2-x1)) / d
+    return (ux, uy)
+
+
+def _ang_deg(cx, cy, px, py):
+    return (math.degrees(math.atan2(py - cy, px - cx)) + 360.0) % 360.0
+
+
+def _is_between_ccw(a0, a1, am):
+    a0 = a0 % 360.0
+    a1 = a1 % 360.0
+    am = am % 360.0
+    if a0 <= a1:
+        return (a0 <= am <= a1)
+    return (am >= a0) or (am <= a1)
+
