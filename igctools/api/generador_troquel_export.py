@@ -6,6 +6,10 @@ import cairosvg
 try:
     import ezdxf
     from svgpathtools import parse_path
+    from svgpathtools import Line as _SP_Line
+    from svgpathtools import Arc as _SP_Arc
+    from svgpathtools import CubicBezier as _SP_Cubic
+    from svgpathtools import QuadraticBezier as _SP_Quad
     _HAS_DXF = True
 except Exception:
     _HAS_DXF = False
@@ -125,11 +129,7 @@ def normalize_svg_root(svg_text: str, width_mm: float, height_mm: float) -> str:
                         parts.append(f"stroke-width:{nv}")
                         changed = changed or (nv != v)
                     elif kl == "stroke-dasharray":
-                        if not re.match(
-                            r"^\s*(\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)*|none)\s*$",
-                            v,
-                            flags=re.I,
-                        ):
+                        if not re.match(r"^\s*(\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)*|none)\s*$", v, flags=re.I):
                             changed = True
                         else:
                             parts.append(f"{k}:{v}")
@@ -142,42 +142,20 @@ def normalize_svg_root(svg_text: str, width_mm: float, height_mm: float) -> str:
 
             if "stroke-dasharray" in el.attrib:
                 v = el.attrib["stroke-dasharray"]
-                if not re.match(
-                    r"^\s*(\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)*|none)\s*$",
-                    v,
-                    flags=re.I,
-                ):
+                if not re.match(r"^\s*(\d+(?:\.\d+)?(?:\s*,\s*\d+(?:\.\d+)?)*|none)\s*$", v, flags=re.I):
                     el.attrib.pop("stroke-dasharray", None)
             if "vector-effect" in el.attrib:
                 el.attrib.pop("vector-effect", None)
 
-        return etree.tostring(root, encoding="utf-8", xml_declaration=False).decode(
-            "utf-8"
-        )
+        return etree.tostring(root, encoding="utf-8", xml_declaration=False).decode("utf-8")
 
     except Exception:
         s = svg_text
         s = re.sub(r'(<svg[^>]*?)\swidth="[^"]*"', r"\1", s, flags=re.I)
         s = re.sub(r'(<svg[^>]*?)\sheight="[^"]*"', r"\1", s, flags=re.I)
-        s = re.sub(
-            r"<svg",
-            f'<svg width="{float(width_mm)}mm" height="{float(height_mm)}mm"',
-            s,
-            count=1,
-            flags=re.I,
-        )
-        s = re.sub(
-            r'stroke-width="\s*([^"]+?)\s*"',
-            lambda m: f'stroke-width="{_to_pt(m.group(1))}"',
-            s,
-            flags=re.I,
-        )
-        s = re.sub(
-            r'stroke-width\s*:\s*([^;"]+)',
-            lambda m: f'stroke-width:{_to_pt(m.group(1))}',
-            s,
-            flags=re.I,
-        )
+        s = re.sub(r"<svg", f'<svg width="{float(width_mm)}mm" height="{float(height_mm)}mm"', s, count=1, flags=re.I)
+        s = re.sub(r'stroke-width="\s*([^"]+?)\s*"', lambda m: f'stroke-width="{_to_pt(m.group(1))}"', s, flags=re.I)
+        s = re.sub(r'stroke-width\s*:\s*([^;"]+)', lambda m: f'stroke-width:{_to_pt(m.group(1))}', s, flags=re.I)
         s = re.sub(r'\svector-effect="[^"]*"', "", s, flags=re.I)
         s = re.sub(r"vector-effect\s*:\s*[^;]+;?", "", s, flags=re.I)
         s = re.sub(r'\sstroke-dasharray="(?!none)[^"]*"', "", s, flags=re.I)
@@ -227,10 +205,8 @@ def _get_svg_mm_size(svg_text: str) -> tuple[float, float]:
         parts = m.group(1).strip().split()
         if len(parts) == 4:
             try:
-                vbw = float(parts[2])
-                vbh = float(parts[3])
-                width_mm = vbw
-                height_mm = vbh
+                width_mm = float(parts[2])
+                height_mm = float(parts[3])
             except Exception:
                 pass
 
@@ -297,9 +273,7 @@ def _parse_transform_attr(s: str):
         if fnl == "matrix" and len(nums) == 6:
             m = tuple(nums)
         elif fnl == "translate":
-            m = _mat_translate(
-                nums[0] if nums else 0.0, nums[1] if len(nums) > 1 else 0.0
-            )
+            m = _mat_translate(nums[0] if nums else 0.0, nums[1] if len(nums) > 1 else 0.0)
         elif fnl == "scale":
             sx = nums[0] if nums else 1.0
             sy = nums[1] if len(nums) > 1 else sx
@@ -339,15 +313,6 @@ def _collect_ancestors_transform(el):
     return M
 
 
-def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
-    minx, miny, vbw, vbh = viewbox
-    sx = float(width_mm) / float(vbw)
-    sy = float(height_mm) / float(vbh)
-    X = (x - minx) * sx
-    Y = (miny + vbh - y) * sy
-    return X, Y
-
-
 def _nearest_layer(el):
     cur = el
     while cur is not None:
@@ -385,7 +350,7 @@ def _is_in_defs(el):
     return False
 
 
-def _round6(x, nd=6):
+def _roundN(x, nd=6):
     try:
         return round(float(x), nd)
     except Exception:
@@ -393,11 +358,7 @@ def _round6(x, nd=6):
 
 
 def _remove_bbox_rects(root, viewbox, tol=1e-6):
-    try:
-        from lxml import etree
-    except Exception:
-        return 0
-
+    from lxml import etree
     minx, miny, vbw, vbh = viewbox
     removed = 0
 
@@ -415,13 +376,10 @@ def _remove_bbox_rects(root, viewbox, tol=1e-6):
             except Exception:
                 return None
 
-        x = _f("x", None)
-        y = _f("y", None)
+        x = _f("x", 0.0)
+        y = _f("y", 0.0)
         w = _f("width", None)
         h = _f("height", None)
-
-        if x is None: x = 0.0
-        if y is None: y = 0.0
         if w is None or h is None:
             continue
 
@@ -436,8 +394,6 @@ def _remove_bbox_rects(root, viewbox, tol=1e-6):
             fill_none = (fill in ("", "none", "transparent")) or ("fill:none" in style)
             if not fill_none:
                 continue
-
-            parent = None
             try:
                 parent = el.getparent()
             except Exception:
@@ -449,12 +405,73 @@ def _remove_bbox_rects(root, viewbox, tol=1e-6):
     return removed
 
 
-def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6, drop_bbox=True) -> str:
-    try:
-        from lxml import etree
-    except Exception:
-        return svg_text
+def _path_signature_geom(d: str, M, nd=6):
+    if not _HAS_DXF:
+        dd = re.sub(r"\s+", " ", (d or "").strip())
+        dd = re.sub(r"\s*,\s*", ",", dd)
+        mm = tuple(_roundN(v, nd) for v in (M or (1, 0, 0, 1, 0, 0)))
+        return ("path_raw", mm, dd)
 
+    try:
+        p = parse_path(d)
+    except Exception:
+        dd = re.sub(r"\s+", " ", (d or "").strip())
+        dd = re.sub(r"\s*,\s*", ",", dd)
+        mm = tuple(_roundN(v, nd) for v in (M or (1, 0, 0, 1, 0, 0)))
+        return ("path_raw", mm, dd)
+
+    sig = []
+    for seg in p:
+        if isinstance(seg, _SP_Line):
+            x1, y1 = float(seg.start.real), float(seg.start.imag)
+            x2, y2 = float(seg.end.real), float(seg.end.imag)
+            x1, y1 = _apply_mat(M, x1, y1)
+            x2, y2 = _apply_mat(M, x2, y2)
+            a = (_roundN(x1, nd), _roundN(y1, nd))
+            b = (_roundN(x2, nd), _roundN(y2, nd))
+            if b < a:
+                a, b = b, a
+            sig.append(("L", a, b))
+
+        elif isinstance(seg, _SP_Arc):
+            c = seg.center
+            cx, cy = float(c.real), float(c.imag)
+            sx, sy = float(seg.start.real), float(seg.start.imag)
+            ex, ey = float(seg.end.real), float(seg.end.imag)
+
+            cx, cy = _apply_mat(M, cx, cy)
+            sx, sy = _apply_mat(M, sx, sy)
+            ex, ey = _apply_mat(M, ex, ey)
+
+            r = float(seg.radius.real) if hasattr(seg.radius, "real") else float(seg.radius)
+            a, b, c1, d1, e1, f1 = M
+            sxm = math.hypot(a, b)
+            sym = math.hypot(c1, d1)
+            if abs(sxm - sym) < 1e-9:
+                r = r * sxm
+
+            sig.append(("A",
+                (_roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd)),
+                (_roundN(sx, nd), _roundN(sy, nd)),
+                (_roundN(ex, nd), _roundN(ey, nd)),
+                bool(getattr(seg, "sweep", True))
+            ))
+
+        else:
+            pts = []
+            for i in range(0, 25):
+                t = i / 24.0
+                z = seg.point(t)
+                x, y = float(z.real), float(z.imag)
+                x, y = _apply_mat(M, x, y)
+                pts.append((_roundN(x, nd), _roundN(y, nd)))
+            sig.append(("S", tuple(pts)))
+
+    return ("path_geom", tuple(sig))
+
+
+def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6, drop_bbox=True) -> str:
+    from lxml import etree
     parser = etree.XMLParser(remove_comments=True, recover=True)
     root = etree.fromstring((svg_text or "").encode("utf-8"), parser=parser)
 
@@ -467,7 +484,6 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
             minx, miny, vbw, vbh = vb
         else:
             minx, miny, vbw, vbh = 0.0, 0.0, float(width_mm), float(height_mm)
-
     viewbox = (minx, miny, vbw, vbh)
 
     if drop_bbox:
@@ -484,10 +500,10 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
         except Exception:
             continue
 
-        if tag not in ("line", "polyline", "polygon", "path"):
+        if tag not in ("line", "polyline", "polygon", "path", "circle", "ellipse"):
             continue
 
-        layer = _nearest_layer(el) or ""
+        layer = (_nearest_layer(el) or "").lower()
 
         M = _parse_transform_attr(el.attrib.get("transform", ""))
         M = _mul(_collect_ancestors_transform(el), M)
@@ -502,11 +518,11 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                 y2 = float(el.attrib.get("y2", "0"))
                 x1, y1 = _apply_mat(M, x1, y1)
                 x2, y2 = _apply_mat(M, x2, y2)
-                a = (_round6(x1, nd), _round6(y1, nd))
-                b = (_round6(x2, nd), _round6(y2, nd))
+                a = (_roundN(x1, nd), _roundN(y1, nd))
+                b = (_roundN(x2, nd), _roundN(y2, nd))
                 if b < a:
                     a, b = b, a
-                key = ("line", layer.lower(), a, b)
+                key = ("line", layer, a, b)
             except Exception:
                 key = None
 
@@ -515,7 +531,6 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
             if not pts_attr:
                 continue
             pts = []
-            ok = False
             for pair in re.split(r"\s+", pts_attr):
                 if not pair.strip():
                     continue
@@ -528,27 +543,57 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                 except Exception:
                     continue
                 x, y = _apply_mat(M, x, y)
-                pts.append((_round6(x, nd), _round6(y, nd)))
-                ok = True
-            if not ok or not pts:
+                pts.append((_roundN(x, nd), _roundN(y, nd)))
+            if not pts:
                 continue
-            closed = (tag == "polygon")
-            key = ("poly", layer.lower(), bool(closed), tuple(pts))
+            key = ("poly", layer, (tag == "polygon"), tuple(pts))
+
+        elif tag == "circle":
+            try:
+                cx = float(el.attrib.get("cx", "0"))
+                cy = float(el.attrib.get("cy", "0"))
+                r = float(el.attrib.get("r", "0"))
+                cx, cy = _apply_mat(M, cx, cy)
+                a, b, c1, d1, e1, f1 = M
+                sxm = math.hypot(a, b)
+                sym = math.hypot(c1, d1)
+                if abs(sxm - sym) > 1e-9:
+                    key = None
+                else:
+                    r = r * sxm
+                    key = ("circle", layer, _roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd))
+            except Exception:
+                key = None
+
+        elif tag == "ellipse":
+            try:
+                cx = float(el.attrib.get("cx", "0"))
+                cy = float(el.attrib.get("cy", "0"))
+                rx = float(el.attrib.get("rx", "0"))
+                ry = float(el.attrib.get("ry", "0"))
+                cx, cy = _apply_mat(M, cx, cy)
+                a, b, c1, d1, e1, f1 = M
+                sxm = math.hypot(a, b)
+                sym = math.hypot(c1, d1)
+                if abs(b) > 1e-12 or abs(c1) > 1e-12:
+                    key = None
+                else:
+                    rx = rx * sxm
+                    ry = ry * sym
+                    key = ("ellipse", layer, _roundN(cx, nd), _roundN(cy, nd), _roundN(rx, nd), _roundN(ry, nd))
+            except Exception:
+                key = None
 
         elif tag == "path":
             d = (el.attrib.get("d") or "").strip()
             if not d:
                 continue
-            mm = tuple(_round6(v, nd) for v in M)
-            dd = re.sub(r"\s+", " ", d)
-            dd = re.sub(r"\s*,\s*", ",", dd)
-            key = ("path", layer.lower(), mm, dd)
+            key = ("path", layer, _path_signature_geom(d, M, nd=nd))
 
         if not key:
             continue
 
         if key in seen:
-            parent = None
             try:
                 parent = el.getparent()
             except Exception:
@@ -573,13 +618,12 @@ def export_generador_troquel_pdf(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
-
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
     svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
 
     buf = BytesIO()
     cairosvg.svg2pdf(
@@ -622,13 +666,12 @@ def export_generador_troquel_svg(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
-
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
     svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
 
     if not svg_clean.lstrip().startswith("<?xml"):
         svg_clean = '<?xml version="1.0" encoding="UTF-8"?>\n' + svg_clean
@@ -653,6 +696,15 @@ def export_generador_troquel_svg(
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
+def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
+    minx, miny, vbw, vbh = viewbox
+    sx = float(width_mm) / float(vbw)
+    sy = float(height_mm) / float(vbh)
+    X = (x - minx) * sx
+    Y = (miny + vbh - y) * sy
+    return X, Y
+
+
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_dxf(
     docname: str,
@@ -664,10 +716,8 @@ def export_generador_troquel_dxf(
 ):
     if not svg:
         frappe.throw("SVG requerido.")
-
     if not _HAS_DXF:
         frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
-
     if not width_mm or not height_mm:
         width_mm, height_mm = _get_svg_mm_size(svg)
 
@@ -675,7 +725,7 @@ def export_generador_troquel_dxf(
     parser = etree.XMLParser(remove_comments=True, recover=True)
 
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
-    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=7, drop_bbox=True)
     root = etree.fromstring(svg_clean.encode("utf-8"), parser=parser)
 
     vb_attr = root.attrib.get("viewBox")
@@ -703,23 +753,65 @@ def export_generador_troquel_dxf(
 
     _ensure_dxf_layers(doc)
 
-    seen_dxf = set()
+    seen_ent = set()
+
+    def _k(*parts):
+        return tuple(parts)
+
+    def _add_line(layer_u, lweight, x1, y1, x2, y2):
+        a = (_roundN(x1, 6), _roundN(y1, 6))
+        b = (_roundN(x2, 6), _roundN(y2, 6))
+        if b < a:
+            a, b = b, a
+        kk = _k("L", layer_u, a, b, int(lweight))
+        if kk in seen_ent:
+            return
+        seen_ent.add(kk)
+        msp.add_line((x1, y1), (x2, y2), dxfattribs={"layer": layer_u, "lineweight": lweight})
+
+    def _add_circle(layer_u, lweight, cx, cy, r):
+        kk = _k("C", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), int(lweight))
+        if kk in seen_ent:
+            return
+        seen_ent.add(kk)
+        msp.add_circle((cx, cy), r, dxfattribs={"layer": layer_u, "lineweight": lweight})
+
+    def _add_arc(layer_u, lweight, cx, cy, r, start_deg, end_deg):
+        kk = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), _roundN(start_deg, 6), _roundN(end_deg, 6), int(lweight))
+        if kk in seen_ent:
+            return
+        seen_ent.add(kk)
+        msp.add_arc((cx, cy), r, start_deg, end_deg, dxfattribs={"layer": layer_u, "lineweight": lweight})
+
+    def _add_ellipse(layer_u, lweight, cx, cy, major_x, major_y, ratio):
+        kk = _k("E", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(major_x, 6), _roundN(major_y, 6), _roundN(ratio, 9), int(lweight))
+        if kk in seen_ent:
+            return
+        seen_ent.add(kk)
+        msp.add_ellipse((cx, cy), (major_x, major_y), ratio=ratio, dxfattribs={"layer": layer_u, "lineweight": lweight})
+
+    def _add_spline(layer_u, lweight, fit_pts):
+        pts = tuple((_roundN(x, 6), _roundN(y, 6)) for x, y in (fit_pts or []))
+        kk = _k("S", layer_u, pts, int(lweight))
+        if kk in seen_ent:
+            return
+        seen_ent.add(kk)
+        msp.add_spline(fit_points=list(fit_pts), dxfattribs={"layer": layer_u, "lineweight": lweight})
 
     for el in root.iter():
         if _is_in_defs(el):
             continue
 
         tag = etree.QName(el).localname.lower()
-        if tag not in ("line", "polyline", "polygon", "path"):
+        if tag not in ("line", "path", "circle", "ellipse", "polyline", "polygon"):
             continue
 
-        layer = _nearest_layer(el) or "cut"
-        if layer.lower() == "guide":
+        layer = (_nearest_layer(el) or "cut").lower()
+        if layer == "guide":
             continue
-
-        layer_upper = layer.upper()
-        if layer_upper not in doc.layers:
-            doc.layers.add(layer_upper, color=DXF_LAYER_COLOR.get(layer, 7))
+        layer_u = layer.upper()
+        if layer_u not in doc.layers:
+            doc.layers.add(layer_u, color=DXF_LAYER_COLOR.get(layer, 7))
 
         M = _parse_transform_attr(el.attrib.get("transform", ""))
         M = _mul(_collect_ancestors_transform(el), M)
@@ -736,26 +828,58 @@ def export_generador_troquel_dxf(
                 x2, y2 = _apply_mat(M, x2, y2)
                 X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
                 X2, Y2 = _vb_to_mm(viewbox, width_mm, height_mm, x2, y2)
+                _add_line(layer_u, lweight, X1, Y1, X2, Y2)
+            except Exception:
+                continue
 
-                a = (_round6(X1, 6), _round6(Y1, 6))
-                b = (_round6(X2, 6), _round6(Y2, 6))
-                if b < a:
-                    a, b = b, a
-                k = ("L", layer_upper, a, b, int(lweight))
-                if k in seen_dxf:
+        elif tag == "circle":
+            try:
+                cx = float(el.attrib.get("cx", "0"))
+                cy = float(el.attrib.get("cy", "0"))
+                r = float(el.attrib.get("r", "0"))
+                cx, cy = _apply_mat(M, cx, cy)
+                a, b, c1, d1, e1, f1 = M
+                sxm = math.hypot(a, b)
+                sym = math.hypot(c1, d1)
+                if abs(sxm - sym) > 1e-9:
                     continue
-                seen_dxf.add(k)
+                r = r * sxm
+                CX, CY = _vb_to_mm(viewbox, width_mm, height_mm, cx, cy)
+                R = r * (float(width_mm) / float(vbw))
+                _add_circle(layer_u, lweight, CX, CY, R)
+            except Exception:
+                continue
 
-                msp.add_line(
-                    (X1, Y1),
-                    (X2, Y2),
-                    dxfattribs={"layer": layer_upper, "lineweight": lweight},
-                )
+        elif tag == "ellipse":
+            try:
+                cx = float(el.attrib.get("cx", "0"))
+                cy = float(el.attrib.get("cy", "0"))
+                rx = float(el.attrib.get("rx", "0"))
+                ry = float(el.attrib.get("ry", "0"))
+                cx, cy = _apply_mat(M, cx, cy)
+                a, b, c1, d1, e1, f1 = M
+                if abs(b) > 1e-12 or abs(c1) > 1e-12:
+                    continue
+                sxm = math.hypot(a, b)
+                sym = math.hypot(c1, d1)
+                rx = rx * sxm
+                ry = ry * sym
+                CX, CY = _vb_to_mm(viewbox, width_mm, height_mm, cx, cy)
+                RX = rx * (float(width_mm) / float(vbw))
+                RY = ry * (float(height_mm) / float(vbh))
+                major = max(RX, RY)
+                if major <= 0:
+                    continue
+                ratio = (min(RX, RY) / major) if major else 1.0
+                if RX >= RY:
+                    _add_ellipse(layer_u, lweight, CX, CY, major, 0.0, ratio)
+                else:
+                    _add_ellipse(layer_u, lweight, CX, CY, 0.0, major, ratio)
             except Exception:
                 continue
 
         elif tag in ("polyline", "polygon"):
-            pts_attr = el.attrib.get("points", "").strip()
+            pts_attr = (el.attrib.get("points") or "").strip()
             if not pts_attr:
                 continue
             pts = []
@@ -766,86 +890,91 @@ def export_generador_troquel_dxf(
                 if len(parts) != 2:
                     continue
                 try:
-                    x = float(parts[0])
-                    y = float(parts[1])
+                    x = float(parts[0]); y = float(parts[1])
                 except Exception:
                     continue
                 x, y = _apply_mat(M, x, y)
                 X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
                 pts.append((X, Y))
-            if not pts:
+            if len(pts) < 2:
                 continue
-            is_closed = (tag == "polygon") or (
-                el.attrib.get("fill", "none") not in ("none", "", "transparent")
-            )
-
-            k = ("P", layer_upper, bool(is_closed), int(lweight), tuple((_round6(x, 6), _round6(y, 6)) for x, y in pts))
-            if k in seen_dxf:
-                continue
-            seen_dxf.add(k)
-
-            msp.add_lwpolyline(
-                pts,
-                format="xy",
-                dxfattribs={
-                    "layer": layer_upper,
-                    "lineweight": lweight,
-                    "closed": is_closed,
-                },
-            )
+            for i in range(len(pts) - 1):
+                _add_line(layer_u, lweight, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1])
+            if tag == "polygon":
+                _add_line(layer_u, lweight, pts[-1][0], pts[-1][1], pts[0][0], pts[0][1])
 
         elif tag == "path":
-            d = el.attrib.get("d", "").strip()
+            d = (el.attrib.get("d") or "").strip()
             if not d:
                 continue
             try:
-                path = parse_path(d)
+                p = parse_path(d)
             except Exception:
                 continue
-            step_mm = 0.5
-            step_u = (
-                step_mm * (float(vbw) / float(width_mm))
-                if float(width_mm) != 0
-                else 0.5
-            )
-            try:
-                length_u = path.length(error=1e-3)
-            except Exception:
-                length_u = max(abs(vbw), abs(vbh))
-            n = max(2, int(max(2, math.ceil(length_u / max(1e-6, step_u)))))
-            pts = []
-            for i in range(n + 1):
-                t = i / n
-                z = path.point(t)
-                x, y = float(z.real), float(z.imag)
-                x, y = _apply_mat(M, x, y)
-                X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
-                if (
-                    i == 0
-                    or abs(X - pts[-1][0]) > 1e-6
-                    or abs(Y - pts[-1][1]) > 1e-6
-                ):
-                    pts.append((X, Y))
-            if len(pts) >= 2:
-                closed = (
-                    abs(pts[0][0] - pts[-1][0]) < 1e-6
-                    and abs(pts[0][1] - pts[-1][1]) < 1e-6
-                )
 
-                k = ("P", layer_upper, bool(closed), int(lweight), tuple((_round6(x, 6), _round6(y, 6)) for x, y in pts))
-                if k in seen_dxf:
-                    continue
-                seen_dxf.add(k)
+            for seg in p:
+                if isinstance(seg, _SP_Line):
+                    x1, y1 = float(seg.start.real), float(seg.start.imag)
+                    x2, y2 = float(seg.end.real), float(seg.end.imag)
+                    x1, y1 = _apply_mat(M, x1, y1)
+                    x2, y2 = _apply_mat(M, x2, y2)
+                    X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
+                    X2, Y2 = _vb_to_mm(viewbox, width_mm, height_mm, x2, y2)
+                    _add_line(layer_u, lweight, X1, Y1, X2, Y2)
 
-                msp.add_lwpolyline(
-                    pts,
-                    format="xy",
-                    dxfattribs={
-                        "layer": layer_upper,
-                        "lineweight": lweight,
-                        "closed": closed,
-                    },
-                )
+                elif isinstance(seg, _SP_Arc):
+                    c = seg.center
+                    cx, cy = float(c.real), float(c.imag)
+                    sx, sy = float(seg.start.real), float(seg.start.imag)
+                    ex, ey = float(seg.end.real), float(seg.end.imag)
+
+                    cx, cy = _apply_mat(M, cx, cy)
+                    sx, sy = _apply_mat(M, sx, sy)
+                    ex, ey = _apply_mat(M, ex, ey)
+
+                    CX, CY = _vb_to_mm(viewbox, width_mm, height_mm, cx, cy)
+                    SX, SY = _vb_to_mm(viewbox, width_mm, height_mm, sx, sy)
+                    EX, EY = _vb_to_mm(viewbox, width_mm, height_mm, ex, ey)
+
+                    r = float(seg.radius.real) if hasattr(seg.radius, "real") else float(seg.radius)
+                    a, b, c1, d1, e1, f1 = M
+                    sxm = math.hypot(a, b)
+                    sym = math.hypot(c1, d1)
+                    if abs(sxm - sym) > 1e-9:
+                        fit = []
+                        for i in range(0, 33):
+                            t = i / 32.0
+                            z = seg.point(t)
+                            x, y = float(z.real), float(z.imag)
+                            x, y = _apply_mat(M, x, y)
+                            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+                            fit.append((X, Y))
+                        _add_spline(layer_u, lweight, fit)
+                        continue
+
+                    R = (r * sxm) * (float(width_mm) / float(vbw))
+
+                    def ang(x, y):
+                        return math.degrees(math.atan2(y - CY, x - CX))
+
+                    a1 = ang(SX, SY)
+                    a2 = ang(EX, EY)
+
+                    if abs((a2 - a1)) < 1e-9 and math.hypot(SX - EX, SY - EY) < 1e-6:
+                        _add_circle(layer_u, lweight, CX, CY, R)
+                    else:
+                        _add_arc(layer_u, lweight, CX, CY, R, a1, a2)
+
+                else:
+                    fit = []
+                    for i in range(0, 25):
+                        t = i / 24.0
+                        z = seg.point(t)
+                        x, y = float(z.real), float(z.imag)
+                        x, y = _apply_mat(M, x, y)
+                        X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+                        fit.append((X, Y))
+                    _add_spline(layer_u, lweight, fit)
 
     text_buf = StringIO()
     doc.write(text_buf)
