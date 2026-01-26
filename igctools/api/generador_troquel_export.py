@@ -718,7 +718,7 @@ def export_generador_troquel_dxf_v2(
             continue
 
         tag = etree.QName(el).localname.lower()
-        if tag not in ("line", "polyline", "polygon", "path"):
+        if tag not in ("line", "polyline", "polygon", "path", "circle", "ellipse", "rect"):
             continue
 
         layer = _nearest_layer(el) or "cut"
@@ -750,7 +750,7 @@ def export_generador_troquel_dxf_v2(
                 continue
 
         elif tag in ("polyline", "polygon"):
-            pts_attr = el.attrib.get("points", "").strip()
+            pts_attr = (el.attrib.get("points", "") or "").strip()
             if not pts_attr:
                 continue
             pts = []
@@ -768,14 +768,25 @@ def export_generador_troquel_dxf_v2(
                 x, y = _apply_mat(M, x, y)
                 X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
                 pts.append((X, Y))
-            if not pts:
+            if len(pts) < 2:
                 continue
             is_closed = (tag == "polygon")
-            msp.add_lwpolyline(
-                pts,
-                format="xy",
-                dxfattribs={**dxfattribs, "closed": is_closed},
-            )
+            msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": is_closed})
+
+        elif tag == "rect":
+            ok = _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
+
+        elif tag == "circle":
+            ok = _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
+
+        elif tag == "ellipse":
+            ok = _dxf_add_ellipse_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs)
+            if not ok:
+                continue
 
         elif tag == "path":
             d = (el.attrib.get("d", "") or "").strip()
@@ -800,7 +811,9 @@ def export_generador_troquel_dxf_v2(
                     if seg is None:
                         continue
 
-                    if seg.__class__.__name__.lower() == "line":
+                    cls = seg.__class__.__name__.lower()
+
+                    if cls == "line":
                         z0 = seg.start
                         z1 = seg.end
                         x0, y0 = float(z0.real), float(z0.imag)
@@ -812,12 +825,15 @@ def export_generador_troquel_dxf_v2(
                         msp.add_line((X0, Y0), (X1, Y1), dxfattribs=dxfattribs)
                         continue
 
-                    if seg.__class__.__name__.lower() == "arc":
-                        ok = _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                    if cls == "arc":
+                        ok = _dxf_add_arc_from_svgpathtools_arc(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
                         if ok:
                             continue
+                        ok2 = _dxf_add_arc_from_segment_3pt(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs)
+                        if ok2:
+                            continue
 
-                    _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.5)
+                    _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.25)
 
     text_buf = StringIO()
     doc.write(text_buf)
@@ -845,7 +861,146 @@ def export_generador_troquel_dxf_v2(
     return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
-def _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+def _dxf_add_rect_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        x = float(el.attrib.get("x", "0") or 0.0)
+        y = float(el.attrib.get("y", "0") or 0.0)
+        w = float(el.attrib.get("width", "0") or 0.0)
+        h = float(el.attrib.get("height", "0") or 0.0)
+        if w <= 0 or h <= 0:
+            return False
+        pts_u = [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
+        pts = []
+        for (px, py) in pts_u:
+            px, py = _apply_mat(M, px, py)
+            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, px, py)
+            pts.append((X, Y))
+        if len(pts) >= 2:
+            msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": True})
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _dxf_add_circle_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        cx = float(el.attrib.get("cx", "0") or 0.0)
+        cy = float(el.attrib.get("cy", "0") or 0.0)
+        r = float(el.attrib.get("r", "0") or 0.0)
+        if r <= 0:
+            return False
+
+        sx, sy = _mat_scales(M)
+        if abs(sx - sy) <= max(1e-6, 0.002 * max(abs(sx), abs(sy))):
+            x, y = _apply_mat(M, cx, cy)
+            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+            vbw = float(viewbox[2])
+            scale_u_to_mm = (float(width_mm) / float(vbw)) if float(vbw) else 1.0
+            R = abs(r * sx) * scale_u_to_mm
+
+            if R > 0:
+                msp.add_circle((X, Y), R, dxfattribs=dxfattribs)
+                return True
+
+        return _dxf_add_ellipse_like_poly(msp, cx, cy, r, r, viewbox, width_mm, height_mm, M, dxfattribs)
+    except Exception:
+        return False
+
+
+def _dxf_add_ellipse_el(msp, el, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        cx = float(el.attrib.get("cx", "0") or 0.0)
+        cy = float(el.attrib.get("cy", "0") or 0.0)
+        rx = float(el.attrib.get("rx", "0") or 0.0)
+        ry = float(el.attrib.get("ry", "0") or 0.0)
+        if rx <= 0 or ry <= 0:
+            return False
+        return _dxf_add_ellipse_like_poly(msp, cx, cy, rx, ry, viewbox, width_mm, height_mm, M, dxfattribs)
+    except Exception:
+        return False
+
+
+def _dxf_add_ellipse_like_poly(msp, cx, cy, rx, ry, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        steps = 180
+        pts = []
+        for i in range(steps + 1):
+            t = (2.0 * math.pi * i) / steps
+            x = cx + rx * math.cos(t)
+            y = cy + ry * math.sin(t)
+            x, y = _apply_mat(M, x, y)
+            X, Y = _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+            if not pts or abs(X - pts[-1][0]) > 1e-6 or abs(Y - pts[-1][1]) > 1e-6:
+                pts.append((X, Y))
+        if len(pts) >= 2:
+            msp.add_lwpolyline(pts, format="xy", dxfattribs={**dxfattribs, "closed": True})
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _mat_scales(M):
+    a, b, c, d, e, f = M
+    sx = math.hypot(a, b)
+    sy = math.hypot(c, d)
+    if sx <= 1e-12:
+        sx = 0.0
+    if sy <= 1e-12:
+        sy = 0.0
+    return sx, sy
+
+
+def _dxf_add_arc_from_svgpathtools_arc(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
+    try:
+        z0 = seg.point(0.0)
+        zm = seg.point(0.5)
+        z1 = seg.point(1.0)
+
+        def pt_mm(z):
+            x, y = float(z.real), float(z.imag)
+            x, y = _apply_mat(M, x, y)
+            return _vb_to_mm(viewbox, width_mm, height_mm, x, y)
+
+        p0 = pt_mm(z0)
+        pm = pt_mm(zm)
+        p1 = pt_mm(z1)
+
+        cxcy = _circumcenter(p0, pm, p1)
+        if not cxcy:
+            return False
+        cx, cy = cxcy
+
+        r0 = math.hypot(p0[0] - cx, p0[1] - cy)
+        r1 = math.hypot(pm[0] - cx, pm[1] - cy)
+        r2 = math.hypot(p1[0] - cx, p1[1] - cy)
+
+        if r0 < 1e-6:
+            return False
+        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.03, r0 * 0.0025):
+            return False
+
+        a0 = _ang_deg(cx, cy, p0[0], p0[1])
+        am = _ang_deg(cx, cy, pm[0], pm[1])
+        a2 = _ang_deg(cx, cy, p1[0], p1[1])
+
+        ccw = _is_between_ccw(a0, a2, am)
+        if ccw:
+            start_angle = a0
+            end_angle = a2
+        else:
+            start_angle = a2
+            end_angle = a0
+
+        msp.add_arc((cx, cy), r0, start_angle, end_angle, dxfattribs=dxfattribs)
+        return True
+    except Exception:
+        return False
+
+
+def _dxf_add_arc_from_segment_3pt(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs):
     try:
         z0 = seg.point(0.0)
         z1 = seg.point(0.5)
@@ -871,7 +1026,7 @@ def _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattr
 
         if r0 < 1e-6:
             return False
-        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.02, r0 * 0.002):
+        if max(abs(r0 - r1), abs(r0 - r2), abs(r1 - r2)) > max(0.03, r0 * 0.0025):
             return False
 
         a0 = _ang_deg(cx, cy, p0[0], p0[1])
@@ -892,7 +1047,7 @@ def _dxf_add_arc_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattr
         return False
 
 
-def _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.5):
+def _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfattribs, step_mm=0.25):
     try:
         vbw = float(viewbox[2])
         step_u = step_mm * (float(vbw) / float(width_mm)) if float(width_mm) else 0.5
@@ -902,7 +1057,8 @@ def _dxf_add_poly_from_segment(msp, seg, viewbox, width_mm, height_mm, M, dxfatt
         except Exception:
             L = 0.0
 
-        n = max(2, int(math.ceil((L if L > 0 else max(abs(vbw), abs(viewbox[3]))) / max(1e-6, step_u))))
+        fallback_u = max(abs(vbw), abs(float(viewbox[3])))
+        n = max(12, int(math.ceil(((L if L > 0 else fallback_u) / max(1e-6, step_u)))))
         pts = []
         for i in range(n + 1):
             t = i / n
@@ -923,14 +1079,14 @@ def _circumcenter(p1, p2, p3):
     x1, y1 = p1
     x2, y2 = p2
     x3, y3 = p3
-    d = 2.0 * (x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2))
+    d = 2.0 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2))
     if abs(d) < 1e-12:
         return None
-    x1s = x1*x1 + y1*y1
-    x2s = x2*x2 + y2*y2
-    x3s = x3*x3 + y3*y3
-    ux = (x1s*(y2-y3) + x2s*(y3-y1) + x3s*(y1-y2)) / d
-    uy = (x1s*(x3-x2) + x2s*(x1-x3) + x3s*(x2-x1)) / d
+    x1s = x1 * x1 + y1 * y1
+    x2s = x2 * x2 + y2 * y2
+    x3s = x3 * x3 + y3 * y3
+    ux = (x1s * (y2 - y3) + x2s * (y3 - y1) + x3s * (y1 - y2)) / d
+    uy = (x1s * (x3 - x2) + x2s * (x1 - x3) + x3s * (x2 - x1)) / d
     return (ux, uy)
 
 
@@ -943,5 +1099,5 @@ def _is_between_ccw(a0, a1, am):
     a1 = a1 % 360.0
     am = am % 360.0
     if a0 <= a1:
-        return (a0 <= am <= a1)
+        return a0 <= am <= a1
     return (am >= a0) or (am <= a1)
