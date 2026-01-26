@@ -250,95 +250,6 @@ def _get_svg_mm_size(svg_text: str) -> tuple[float, float]:
     return float(width_mm), float(height_mm)
 
 
-@frappe.whitelist(methods=["POST"])
-def export_generador_troquel_pdf(
-    docname: str,
-    svg: str,
-    width_mm: float | None = None,
-    height_mm: float | None = None,
-    filename: str | None = None,
-    is_private: int = 0,
-):
-    if not svg:
-        frappe.throw("SVG requerido.")
-
-    if not width_mm or not height_mm:
-        width_mm, height_mm = _get_svg_mm_size(svg)
-
-    svg_clean = normalize_svg_root(svg, width_mm, height_mm)
-    svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-
-    buf = BytesIO()
-    cairosvg.svg2pdf(
-        bytestring=svg_clean.encode("utf-8"),
-        write_to=buf,
-        dpi=96,
-        background_color="white",
-    )
-    pdf_bytes = buf.getvalue()
-    buf.close()
-
-    if not filename:
-        filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.pdf"
-    if not filename.lower().endswith(".pdf"):
-        filename += ".pdf"
-
-    filedoc = frappe.get_doc(
-        {
-            "doctype": "File",
-            "file_name": filename,
-            "is_private": int(is_private or 0),
-            "content": pdf_bytes,
-            "attached_to_doctype": "Generador de Troquel",
-            "attached_to_name": docname,
-        }
-    )
-    filedoc.insert(ignore_permissions=True)
-    frappe.db.commit()
-    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
-
-
-@frappe.whitelist(methods=["POST"])
-def export_generador_troquel_svg(
-    docname: str,
-    svg: str,
-    width_mm: float | None = None,
-    height_mm: float | None = None,
-    filename: str | None = None,
-    is_private: int = 0,
-):
-    if not svg:
-        frappe.throw("SVG requerido.")
-
-    if not width_mm or not height_mm:
-        width_mm, height_mm = _get_svg_mm_size(svg)
-
-    svg_clean = normalize_svg_root(svg, width_mm, height_mm)
-    svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
-
-    if not svg_clean.lstrip().startswith("<?xml"):
-        svg_clean = '<?xml version="1.0" encoding="UTF-8"?>\n' + svg_clean
-
-    if not filename:
-        filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.svg"
-    if not filename.lower().endswith(".svg"):
-        filename += ".svg"
-
-    filedoc = frappe.get_doc(
-        {
-            "doctype": "File",
-            "file_name": filename,
-            "is_private": int(is_private or 0),
-            "content": svg_clean.encode("utf-8"),
-            "attached_to_doctype": "Generador de Troquel",
-            "attached_to_name": docname,
-        }
-    )
-    filedoc.insert(ignore_permissions=True)
-    frappe.db.commit()
-    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
-
-
 def _mul(A, B):
     a, b, c, d, e, f = A
     a2, b2, c2, d2, e2, f2 = B
@@ -474,6 +385,274 @@ def _is_in_defs(el):
     return False
 
 
+def _round6(x, nd=6):
+    try:
+        return round(float(x), nd)
+    except Exception:
+        return 0.0
+
+
+def _remove_bbox_rects(root, viewbox, tol=1e-6):
+    try:
+        from lxml import etree
+    except Exception:
+        return 0
+
+    minx, miny, vbw, vbh = viewbox
+    removed = 0
+
+    for el in list(root.iter()):
+        try:
+            tag = etree.QName(el).localname.lower()
+        except Exception:
+            continue
+        if tag != "rect":
+            continue
+
+        def _f(a, default=None):
+            try:
+                return float(el.attrib.get(a, default))
+            except Exception:
+                return None
+
+        x = _f("x", None)
+        y = _f("y", None)
+        w = _f("width", None)
+        h = _f("height", None)
+
+        if x is None: x = 0.0
+        if y is None: y = 0.0
+        if w is None or h is None:
+            continue
+
+        if (
+            abs(x - float(minx)) <= tol
+            and abs(y - float(miny)) <= tol
+            and abs(w - float(vbw)) <= tol
+            and abs(h - float(vbh)) <= tol
+        ):
+            fill = (el.attrib.get("fill") or "").strip().lower()
+            style = (el.attrib.get("style") or "").lower()
+            fill_none = (fill in ("", "none", "transparent")) or ("fill:none" in style)
+            if not fill_none:
+                continue
+
+            parent = None
+            try:
+                parent = el.getparent()
+            except Exception:
+                parent = None
+            if parent is not None:
+                parent.remove(el)
+                removed += 1
+
+    return removed
+
+
+def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6, drop_bbox=True) -> str:
+    try:
+        from lxml import etree
+    except Exception:
+        return svg_text
+
+    parser = etree.XMLParser(remove_comments=True, recover=True)
+    root = etree.fromstring((svg_text or "").encode("utf-8"), parser=parser)
+
+    vb_attr = root.attrib.get("viewBox")
+    if not vb_attr:
+        minx, miny, vbw, vbh = 0.0, 0.0, float(width_mm), float(height_mm)
+    else:
+        vb = [float(x) for x in re.split(r"[ ,]+", vb_attr.strip()) if x]
+        if len(vb) == 4:
+            minx, miny, vbw, vbh = vb
+        else:
+            minx, miny, vbw, vbh = 0.0, 0.0, float(width_mm), float(height_mm)
+
+    viewbox = (minx, miny, vbw, vbh)
+
+    if drop_bbox:
+        _remove_bbox_rects(root, viewbox, tol=1e-6)
+
+    seen = set()
+
+    for el in list(root.iter()):
+        if _is_in_defs(el):
+            continue
+
+        try:
+            tag = etree.QName(el).localname.lower()
+        except Exception:
+            continue
+
+        if tag not in ("line", "polyline", "polygon", "path"):
+            continue
+
+        layer = _nearest_layer(el) or ""
+
+        M = _parse_transform_attr(el.attrib.get("transform", ""))
+        M = _mul(_collect_ancestors_transform(el), M)
+
+        key = None
+
+        if tag == "line":
+            try:
+                x1 = float(el.attrib.get("x1", "0"))
+                y1 = float(el.attrib.get("y1", "0"))
+                x2 = float(el.attrib.get("x2", "0"))
+                y2 = float(el.attrib.get("y2", "0"))
+                x1, y1 = _apply_mat(M, x1, y1)
+                x2, y2 = _apply_mat(M, x2, y2)
+                a = (_round6(x1, nd), _round6(y1, nd))
+                b = (_round6(x2, nd), _round6(y2, nd))
+                if b < a:
+                    a, b = b, a
+                key = ("line", layer.lower(), a, b)
+            except Exception:
+                key = None
+
+        elif tag in ("polyline", "polygon"):
+            pts_attr = (el.attrib.get("points") or "").strip()
+            if not pts_attr:
+                continue
+            pts = []
+            ok = False
+            for pair in re.split(r"\s+", pts_attr):
+                if not pair.strip():
+                    continue
+                parts = pair.split(",")
+                if len(parts) != 2:
+                    continue
+                try:
+                    x = float(parts[0])
+                    y = float(parts[1])
+                except Exception:
+                    continue
+                x, y = _apply_mat(M, x, y)
+                pts.append((_round6(x, nd), _round6(y, nd)))
+                ok = True
+            if not ok or not pts:
+                continue
+            closed = (tag == "polygon")
+            key = ("poly", layer.lower(), bool(closed), tuple(pts))
+
+        elif tag == "path":
+            d = (el.attrib.get("d") or "").strip()
+            if not d:
+                continue
+            mm = tuple(_round6(v, nd) for v in M)
+            dd = re.sub(r"\s+", " ", d)
+            dd = re.sub(r"\s*,\s*", ",", dd)
+            key = ("path", layer.lower(), mm, dd)
+
+        if not key:
+            continue
+
+        if key in seen:
+            parent = None
+            try:
+                parent = el.getparent()
+            except Exception:
+                parent = None
+            if parent is not None:
+                parent.remove(el)
+            continue
+
+        seen.add(key)
+
+    return etree.tostring(root, encoding="utf-8", xml_declaration=False).decode("utf-8")
+
+
+@frappe.whitelist(methods=["POST"])
+def export_generador_troquel_pdf(
+    docname: str,
+    svg: str,
+    width_mm: float | None = None,
+    height_mm: float | None = None,
+    filename: str | None = None,
+    is_private: int = 0,
+):
+    if not svg:
+        frappe.throw("SVG requerido.")
+
+    if not width_mm or not height_mm:
+        width_mm, height_mm = _get_svg_mm_size(svg)
+
+    svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+    svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
+
+    buf = BytesIO()
+    cairosvg.svg2pdf(
+        bytestring=svg_clean.encode("utf-8"),
+        write_to=buf,
+        dpi=96,
+        background_color="white",
+    )
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    if not filename:
+        filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.pdf"
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+
+    filedoc = frappe.get_doc(
+        {
+            "doctype": "File",
+            "file_name": filename,
+            "is_private": int(is_private or 0),
+            "content": pdf_bytes,
+            "attached_to_doctype": "Generador de Troquel",
+            "attached_to_name": docname,
+        }
+    )
+    filedoc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
+
+
+@frappe.whitelist(methods=["POST"])
+def export_generador_troquel_svg(
+    docname: str,
+    svg: str,
+    width_mm: float | None = None,
+    height_mm: float | None = None,
+    filename: str | None = None,
+    is_private: int = 0,
+):
+    if not svg:
+        frappe.throw("SVG requerido.")
+
+    if not width_mm or not height_mm:
+        width_mm, height_mm = _get_svg_mm_size(svg)
+
+    svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+    svg_clean = _inject_layer_css(svg_clean, LAYER_WIDTH_MM)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
+
+    if not svg_clean.lstrip().startswith("<?xml"):
+        svg_clean = '<?xml version="1.0" encoding="UTF-8"?>\n' + svg_clean
+
+    if not filename:
+        filename = f"{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.svg"
+    if not filename.lower().endswith(".svg"):
+        filename += ".svg"
+
+    filedoc = frappe.get_doc(
+        {
+            "doctype": "File",
+            "file_name": filename,
+            "is_private": int(is_private or 0),
+            "content": svg_clean.encode("utf-8"),
+            "attached_to_doctype": "Generador de Troquel",
+            "attached_to_name": docname,
+        }
+    )
+    filedoc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
+
+
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_dxf(
     docname: str,
@@ -494,7 +673,9 @@ def export_generador_troquel_dxf(
 
     from lxml import etree
     parser = etree.XMLParser(remove_comments=True, recover=True)
+
     svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+    svg_clean = _dedupe_svg_geometry(svg_clean, width_mm, height_mm, nd=6, drop_bbox=True)
     root = etree.fromstring(svg_clean.encode("utf-8"), parser=parser)
 
     vb_attr = root.attrib.get("viewBox")
@@ -521,6 +702,8 @@ def export_generador_troquel_dxf(
         return max(0, min(211, int(round(mm * 100))))
 
     _ensure_dxf_layers(doc)
+
+    seen_dxf = set()
 
     for el in root.iter():
         if _is_in_defs(el):
@@ -553,6 +736,16 @@ def export_generador_troquel_dxf(
                 x2, y2 = _apply_mat(M, x2, y2)
                 X1, Y1 = _vb_to_mm(viewbox, width_mm, height_mm, x1, y1)
                 X2, Y2 = _vb_to_mm(viewbox, width_mm, height_mm, x2, y2)
+
+                a = (_round6(X1, 6), _round6(Y1, 6))
+                b = (_round6(X2, 6), _round6(Y2, 6))
+                if b < a:
+                    a, b = b, a
+                k = ("L", layer_upper, a, b, int(lweight))
+                if k in seen_dxf:
+                    continue
+                seen_dxf.add(k)
+
                 msp.add_line(
                     (X1, Y1),
                     (X2, Y2),
@@ -585,6 +778,12 @@ def export_generador_troquel_dxf(
             is_closed = (tag == "polygon") or (
                 el.attrib.get("fill", "none") not in ("none", "", "transparent")
             )
+
+            k = ("P", layer_upper, bool(is_closed), int(lweight), tuple((_round6(x, 6), _round6(y, 6)) for x, y in pts))
+            if k in seen_dxf:
+                continue
+            seen_dxf.add(k)
+
             msp.add_lwpolyline(
                 pts,
                 format="xy",
@@ -632,6 +831,12 @@ def export_generador_troquel_dxf(
                     abs(pts[0][0] - pts[-1][0]) < 1e-6
                     and abs(pts[0][1] - pts[-1][1]) < 1e-6
                 )
+
+                k = ("P", layer_upper, bool(closed), int(lweight), tuple((_round6(x, 6), _round6(y, 6)) for x, y in pts))
+                if k in seen_dxf:
+                    continue
+                seen_dxf.add(k)
+
                 msp.add_lwpolyline(
                     pts,
                     format="xy",
