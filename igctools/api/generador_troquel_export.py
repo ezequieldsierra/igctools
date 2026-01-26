@@ -414,22 +414,7 @@ def _canon_line_key(x1, y1, x2, y2, nd=6):
     return ("L", a, b)
 
 
-def _canon_arc_key(cx, cy, r, sx, sy, ex, ey, nd=6):
-    c = (_roundN(cx, nd), _roundN(cy, nd), _roundN(r, nd))
-    s = (_roundN(sx, nd), _roundN(sy, nd))
-    e = (_roundN(ex, nd), _roundN(ey, nd))
-    k1 = ("A", c, s, e)
-    k2 = ("A", c, e, s)
-    return min(k1, k2)
-
-
-def _canon_bezier_key(pts, nd=6):
-    p = tuple((_roundN(x, nd), _roundN(y, nd)) for x, y in pts)
-    pr = tuple(reversed(p))
-    return ("B", min(p, pr))
-
-
-def _path_signature_geom(d: str, M, nd=6):
+def _path_signature_sample(d: str, M, nd=6):
     if not _HAS_DXF:
         dd = re.sub(r"\s+", " ", (d or "").strip())
         dd = re.sub(r"\s*,\s*", ",", dd)
@@ -444,68 +429,25 @@ def _path_signature_geom(d: str, M, nd=6):
         mm = tuple(_roundN(v, nd) for v in (M or (1, 0, 0, 1, 0, 0)))
         return ("RAW", mm, dd)
 
-    seg_keys = []
+    try:
+        length_u = p.length(error=1e-3)
+    except Exception:
+        length_u = 0.0
 
-    for seg in p:
-        if isinstance(seg, _SP_Line):
-            x1, y1 = float(seg.start.real), float(seg.start.imag)
-            x2, y2 = float(seg.end.real), float(seg.end.imag)
-            x1, y1 = _apply_mat(M, x1, y1)
-            x2, y2 = _apply_mat(M, x2, y2)
-            seg_keys.append(_canon_line_key(x1, y1, x2, y2, nd=nd))
+    n = 48
+    if length_u > 0:
+        n = int(max(24, min(160, math.ceil(length_u / 6.0) * 8)))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        z = p.point(t)
+        x, y = float(z.real), float(z.imag)
+        x, y = _apply_mat(M, x, y)
+        pts.append((_roundN(x, nd), _roundN(y, nd)))
 
-        elif isinstance(seg, _SP_Arc):
-            c = seg.center
-            cx, cy = float(c.real), float(c.imag)
-            sx, sy = float(seg.start.real), float(seg.start.imag)
-            ex, ey = float(seg.end.real), float(seg.end.imag)
-
-            cx, cy = _apply_mat(M, cx, cy)
-            sx, sy = _apply_mat(M, sx, sy)
-            ex, ey = _apply_mat(M, ex, ey)
-
-            r = float(seg.radius.real) if hasattr(seg.radius, "real") else float(seg.radius)
-            a, b, c1, d1, e1, f1 = M
-            sxm = math.hypot(a, b)
-            sym = math.hypot(c1, d1)
-            if abs(sxm - sym) < 1e-9:
-                r = r * sxm
-
-            seg_keys.append(_canon_arc_key(cx, cy, r, sx, sy, ex, ey, nd=nd))
-
-        elif isinstance(seg, (_SP_Cubic, _SP_Quad)):
-            pts = []
-            z0 = seg.start
-            z1 = seg.end
-            pts.append((float(z0.real), float(z0.imag)))
-            if isinstance(seg, _SP_Cubic):
-                c1 = seg.control1
-                c2 = seg.control2
-                pts.append((float(c1.real), float(c1.imag)))
-                pts.append((float(c2.real), float(c2.imag)))
-            else:
-                c1 = seg.control
-                pts.append((float(c1.real), float(c1.imag)))
-            pts.append((float(z1.real), float(z1.imag)))
-
-            tpts = []
-            for x, y in pts:
-                X, Y = _apply_mat(M, x, y)
-                tpts.append((X, Y))
-            seg_keys.append(_canon_bezier_key(tpts, nd=nd))
-
-        else:
-            pts = []
-            for i in range(0, 33):
-                t = i / 32.0
-                z = seg.point(t)
-                x, y = float(z.real), float(z.imag)
-                x, y = _apply_mat(M, x, y)
-                pts.append((x, y))
-            seg_keys.append(_canon_bezier_key(pts, nd=nd))
-
-    seg_keys.sort()
-    return ("G", tuple(seg_keys))
+    pts_t = tuple(pts)
+    pts_r = tuple(reversed(pts_t))
+    return ("S", min(pts_t, pts_r))
 
 
 def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6, drop_bbox=True) -> str:
@@ -612,8 +554,9 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
                     sym = math.hypot(c1, d1)
                     rx = rx * sxm
                     ry = ry * sym
-                    rx, ry = _canon_pair((_roundN(rx, nd),), (_roundN(ry, nd),))
-                    key = ("ellipse", _roundN(cx, nd), _roundN(cy, nd), rx[0], ry[0])
+                    r1 = _roundN(min(rx, ry), nd)
+                    r2 = _roundN(max(rx, ry), nd)
+                    key = ("ellipse", _roundN(cx, nd), _roundN(cy, nd), r1, r2)
             except Exception:
                 key = None
 
@@ -621,7 +564,7 @@ def _dedupe_svg_geometry(svg_text: str, width_mm: float, height_mm: float, nd=6,
             d = (el.attrib.get("d") or "").strip()
             if not d:
                 continue
-            key = ("path", _path_signature_geom(d, M, nd=nd))
+            key = ("path", _path_signature_sample(d, M, nd=nd))
 
         if not key:
             continue
@@ -647,6 +590,23 @@ def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
     X = (x - minx) * sx
     Y = (miny + vbh - y) * sy
     return X, Y
+
+
+def _norm360(a):
+    a = float(a) % 360.0
+    if a < 0:
+        a += 360.0
+    return a
+
+
+def _ccw_span(a1, a2):
+    return (_norm360(a2) - _norm360(a1)) % 360.0
+
+
+def _mid_is_on_ccw(a1, a2, amid):
+    d = _ccw_span(a1, a2)
+    dm = (_norm360(amid) - _norm360(a1)) % 360.0
+    return dm <= d + 1e-9
 
 
 @frappe.whitelist(methods=["POST"])
@@ -796,7 +756,9 @@ def export_generador_troquel_dxf(
         return tuple(parts)
 
     def _add_line(layer_u, lweight, x1, y1, x2, y2):
-        kk = _k("L", layer_u) + _canon_line_key(x1, y1, x2, y2, nd=6) + (int(lweight),)
+        kk = _k("L", layer_u, _roundN(x1, 6), _roundN(y1, 6), _roundN(x2, 6), _roundN(y2, 6), int(lweight))
+        kk2 = _k("L", layer_u, _roundN(x2, 6), _roundN(y2, 6), _roundN(x1, 6), _roundN(y1, 6), int(lweight))
+        kk = min(kk, kk2)
         if kk in seen_ent:
             return
         seen_ent.add(kk)
@@ -810,25 +772,20 @@ def export_generador_troquel_dxf(
         msp.add_circle((cx, cy), r, dxfattribs={"layer": layer_u, "lineweight": lweight})
 
     def _add_arc(layer_u, lweight, cx, cy, r, start_deg, end_deg):
-        a1 = _roundN(start_deg, 6)
-        a2 = _roundN(end_deg, 6)
-        kk1 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), a1, a2, int(lweight))
-        kk2 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), a2, a1, int(lweight))
+        a1 = _norm360(start_deg)
+        a2 = _norm360(end_deg)
+        kk1 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), _roundN(a1, 6), _roundN(a2, 6), int(lweight))
+        kk2 = _k("A", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(r, 6), _roundN(a2, 6), _roundN(a1, 6), int(lweight))
         kk = min(kk1, kk2)
         if kk in seen_ent:
             return
         seen_ent.add(kk)
-        msp.add_arc((cx, cy), r, start_deg, end_deg, dxfattribs={"layer": layer_u, "lineweight": lweight})
-
-    def _add_ellipse(layer_u, lweight, cx, cy, major_x, major_y, ratio):
-        kk = _k("E", layer_u, _roundN(cx, 6), _roundN(cy, 6), _roundN(major_x, 6), _roundN(major_y, 6), _roundN(ratio, 9), int(lweight))
-        if kk in seen_ent:
-            return
-        seen_ent.add(kk)
-        msp.add_ellipse((cx, cy), (major_x, major_y), ratio=ratio, dxfattribs={"layer": layer_u, "lineweight": lweight})
+        msp.add_arc((cx, cy), r, a1, a2, dxfattribs={"layer": layer_u, "lineweight": lweight})
 
     def _add_spline(layer_u, lweight, fit_pts):
         pts = tuple((_roundN(x, 6), _roundN(y, 6)) for x, y in (fit_pts or []))
+        if len(pts) < 2:
+            return
         pr = tuple(reversed(pts))
         kk = _k("S", layer_u, min(pts, pr), int(lweight))
         if kk in seen_ent:
@@ -890,32 +847,7 @@ def export_generador_troquel_dxf(
                 continue
 
         elif tag == "ellipse":
-            try:
-                cx = float(el.attrib.get("cx", "0"))
-                cy = float(el.attrib.get("cy", "0"))
-                rx = float(el.attrib.get("rx", "0"))
-                ry = float(el.attrib.get("ry", "0"))
-                cx, cy = _apply_mat(M, cx, cy)
-                a, b, c1, d1, e1, f1 = M
-                if abs(b) > 1e-12 or abs(c1) > 1e-12:
-                    continue
-                sxm = math.hypot(a, b)
-                sym = math.hypot(c1, d1)
-                rx = rx * sxm
-                ry = ry * sym
-                CX, CY = _vb_to_mm(viewbox, width_mm, height_mm, cx, cy)
-                RX = rx * (float(width_mm) / float(vbw))
-                RY = ry * (float(height_mm) / float(vbh))
-                major = max(RX, RY)
-                if major <= 0:
-                    continue
-                ratio = (min(RX, RY) / major) if major else 1.0
-                if RX >= RY:
-                    _add_ellipse(layer_u, lweight, CX, CY, major, 0.0, ratio)
-                else:
-                    _add_ellipse(layer_u, lweight, CX, CY, 0.0, major, ratio)
-            except Exception:
-                continue
+            continue
 
         elif tag in ("polyline", "polygon"):
             pts_attr = (el.attrib.get("points") or "").strip()
@@ -966,14 +898,18 @@ def export_generador_troquel_dxf(
                     cx, cy = float(c.real), float(c.imag)
                     sx, sy = float(seg.start.real), float(seg.start.imag)
                     ex, ey = float(seg.end.real), float(seg.end.imag)
+                    mz = seg.point(0.5)
+                    mx, my = float(mz.real), float(mz.imag)
 
                     cx, cy = _apply_mat(M, cx, cy)
                     sx, sy = _apply_mat(M, sx, sy)
                     ex, ey = _apply_mat(M, ex, ey)
+                    mx, my = _apply_mat(M, mx, my)
 
                     CX, CY = _vb_to_mm(viewbox, width_mm, height_mm, cx, cy)
                     SX, SY = _vb_to_mm(viewbox, width_mm, height_mm, sx, sy)
                     EX, EY = _vb_to_mm(viewbox, width_mm, height_mm, ex, ey)
+                    MX, MY = _vb_to_mm(viewbox, width_mm, height_mm, mx, my)
 
                     r = float(seg.radius.real) if hasattr(seg.radius, "real") else float(seg.radius)
                     a, b, c1, d1, e1, f1 = M
@@ -981,8 +917,8 @@ def export_generador_troquel_dxf(
                     sym = math.hypot(c1, d1)
                     if abs(sxm - sym) > 1e-9:
                         fit = []
-                        for i in range(0, 33):
-                            t = i / 32.0
+                        for i in range(0, 41):
+                            t = i / 40.0
                             z = seg.point(t)
                             x, y = float(z.real), float(z.imag)
                             x, y = _apply_mat(M, x, y)
@@ -993,21 +929,26 @@ def export_generador_troquel_dxf(
 
                     R = (r * sxm) * (float(width_mm) / float(vbw))
 
+                    if math.hypot(SX - EX, SY - EY) < 1e-6:
+                        _add_circle(layer_u, lweight, CX, CY, R)
+                        continue
+
                     def ang(x, y):
-                        return math.degrees(math.atan2(y - CY, x - CX))
+                        return _norm360(math.degrees(math.atan2(y - CY, x - CX)))
 
                     a1 = ang(SX, SY)
                     a2 = ang(EX, EY)
+                    am = ang(MX, MY)
 
-                    if math.hypot(SX - EX, SY - EY) < 1e-6:
-                        _add_circle(layer_u, lweight, CX, CY, R)
-                    else:
-                        _add_arc(layer_u, lweight, CX, CY, R, a1, a2)
+                    if not _mid_is_on_ccw(a1, a2, am):
+                        a1, a2 = a2, a1
+
+                    _add_arc(layer_u, lweight, CX, CY, R, a1, a2)
 
                 else:
                     fit = []
-                    for i in range(0, 25):
-                        t = i / 24.0
+                    for i in range(0, 33):
+                        t = i / 32.0
                         z = seg.point(t)
                         x, y = float(z.real), float(z.imag)
                         x, y = _apply_mat(M, x, y)
