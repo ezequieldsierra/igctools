@@ -1583,23 +1583,52 @@ def _parse_transform_attr(s: str):
     M = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
     if not s:
         return M
+
     for fn, args in re.findall(r"([a-zA-Z]+)\s*\(([^)]*)\)", s):
         fnl = fn.strip().lower()
         nums = [float(x) for x in re.split(r"[ ,]+", args.strip()) if x]
+
         if fnl == "matrix" and len(nums) == 6:
-            m = tuple(nums)
+            m = (nums[0], nums[1], nums[2], nums[3], nums[4], nums[5])
+
         elif fnl == "translate":
             tx = nums[0] if nums else 0.0
             ty = nums[1] if len(nums) > 1 else 0.0
             m = (1.0, 0.0, 0.0, 1.0, tx, ty)
+
         elif fnl == "scale":
             sx = nums[0] if nums else 1.0
             sy = nums[1] if len(nums) > 1 else sx
             m = (sx, 0.0, 0.0, sy, 0.0, 0.0)
+
+        elif fnl == "rotate":
+            # SVG rotate(a) o rotate(a cx cy)
+            if not nums:
+                continue
+            a = math.radians(nums[0])
+            ca = math.cos(a)
+            sa = math.sin(a)
+
+            if len(nums) >= 3:
+                cx = nums[1]
+                cy = nums[2]
+                # T(cx,cy) * R(a) * T(-cx,-cy)
+                t1 = (1.0, 0.0, 0.0, 1.0, cx, cy)
+                r  = (ca,  sa, -sa, ca, 0.0, 0.0)
+                t2 = (1.0, 0.0, 0.0, 1.0, -cx, -cy)
+                m = _mul(_mul(t1, r), t2)
+            else:
+                m = (ca, sa, -sa, ca, 0.0, 0.0)
+
         else:
             continue
+
+        # IMPORTANTE: SVG aplica transforms en orden (izq->der) sobre el punto.
+        # Con nuestro _apply_mat(x)=M*x, vamos acumulando como M = M * m
         M = _mul(M, m)
+
     return M
+
 
 
 def _collect_ancestors_transform(el):
