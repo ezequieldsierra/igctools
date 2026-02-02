@@ -1673,3 +1673,50 @@ def _vb_to_mm(viewbox, width_mm, height_mm, x, y):
     Ysvg = (y - miny) * sy
     Y = float(height_mm) - Ysvg
     return (X, Y)
+
+@frappe.whitelist(methods=["POST"])
+def export_hoja_de_arreglo_pdf(
+    docname: str,
+    svg: str,
+    width_mm: float | None = None,
+    height_mm: float | None = None,
+    filename: str | None = None,
+    is_private: int = 0,
+):
+    """Exporta el SVG de Hoja de Arreglo (tablero + montaje) a PDF. Sin dedup ni layer CSS."""
+    if not svg:
+        frappe.throw("SVG requerido.")
+
+    if not width_mm or not height_mm:
+        width_mm, height_mm = _get_svg_mm_size(svg)
+
+    svg_clean = normalize_svg_root(svg, width_mm, height_mm)
+
+    buf = BytesIO()
+    cairosvg.svg2pdf(
+        bytestring=svg_clean.encode("utf-8"),
+        write_to=buf,
+        dpi=96,
+        background_color="white",
+    )
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    if not filename:
+        filename = f"hoja-de-arreglo-{frappe.utils.now_datetime().strftime('%Y%m%d-%H%M%S')}.pdf"
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+
+    filedoc = frappe.get_doc(
+        {
+            "doctype": "File",
+            "file_name": filename,
+            "is_private": int(is_private or 0),
+            "content": pdf_bytes,
+            "attached_to_doctype": "Tablero de Troquel",
+            "attached_to_name": docname,
+        }
+    )
+    filedoc.insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
