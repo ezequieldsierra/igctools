@@ -2,6 +2,15 @@ import math
 import frappe
 from xml.etree import ElementTree as ET
 
+SVG_NS = "http://www.w3.org/2000/svg"
+XLINK_NS = "http://www.w3.org/1999/xlink"
+
+ET.register_namespace("", SVG_NS)
+ET.register_namespace("xlink", XLINK_NS)
+
+def _q(tag):
+    return "{%s}%s" % (SVG_NS, tag)
+
 def _local_name(tag):
     if not tag:
         return ""
@@ -64,17 +73,11 @@ def _sample_svg_path_points(d, step_mm=1.0):
         from svgpathtools import parse_path
     except Exception:
         return []
-
     try:
         path = parse_path(d)
-    except Exception:
-        return []
-
-    try:
         L = float(path.length())
     except Exception:
         return []
-
     if not math.isfinite(L) or L <= 1e-9:
         return []
 
@@ -84,9 +87,6 @@ def _sample_svg_path_points(d, step_mm=1.0):
         t = (i / float(n))
         try:
             p = path.point(t)
-        except Exception:
-            continue
-        try:
             x = float(p.real)
             y = float(p.imag)
         except Exception:
@@ -261,7 +261,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         return {"ok": False, "error": f"Error leyendo Cut: {type(e).__name__} {repr(e)}"}
 
     if not line_geoms:
-        g = ET.Element("g", {"id": "gg_rubber_group", "data-layer": "Rubber"})
+        g = ET.Element(_q("g"), {"id": "gg_rubber_group", "data-layer": "Rubber"})
         fit.append(g)
         return {"ok": True, "svg": ET.tostring(root, encoding="unicode")}
 
@@ -290,7 +290,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     except Exception as e:
         return {"ok": False, "error": f"Error convirtiendo a SVG: {type(e).__name__} {repr(e)}"}
 
-    g = ET.Element("g", {
+    g = ET.Element(_q("g"), {
         "id": "gg_rubber_group",
         "data-layer": "Rubber",
         "fill": str(fill or "#1f5193"),
@@ -302,9 +302,10 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     for d in paths:
         if not d:
             continue
-        p = ET.Element("path", {"d": d})
+        p = ET.Element(_q("path"), {"d": d})
         g.append(p)
 
     fit.append(g)
 
-    return {"ok": True, "svg": ET.tostring(root, encoding="unicode")}
+    out_svg = ET.tostring(root, encoding="unicode")
+    return {"ok": True, "svg": out_svg}
