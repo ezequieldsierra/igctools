@@ -9,12 +9,6 @@ def _local_name(tag):
         return tag.split("}", 1)[1]
     return tag
 
-def _nsmap_from_root(root):
-    ns = {}
-    if root.tag.startswith("{"):
-        ns["svg"] = root.tag.split("}", 1)[0].replace("{", "")
-    return ns
-
 def _find_first(root, pred):
     for el in root.iter():
         if pred(el):
@@ -63,17 +57,43 @@ def _parse_points(points_str):
     return pts
 
 def _sample_svg_path_points(d, step_mm=1.0):
-    from svgpathtools import parse_path
-    path = parse_path(d or "")
-    if not path or path.length() <= 1e-9:
+    d = (d or "").strip()
+    if not d:
         return []
-    L = float(path.length())
-    n = max(2, int(math.ceil(L / max(0.2, float(step_mm)))))
+    try:
+        from svgpathtools import parse_path
+    except Exception:
+        return []
+
+    try:
+        path = parse_path(d)
+    except Exception:
+        return []
+
+    try:
+        L = float(path.length())
+    except Exception:
+        return []
+
+    if not math.isfinite(L) or L <= 1e-9:
+        return []
+
+    n = max(2, int(math.ceil(L / max(0.2, float(step_mm or 1.0)))))
     pts = []
     for i in range(n + 1):
         t = (i / float(n))
-        p = path.point(t)
-        pts.append((float(p.real), float(p.imag)))
+        try:
+            p = path.point(t)
+        except Exception:
+            continue
+        try:
+            x = float(p.real)
+            y = float(p.imag)
+        except Exception:
+            continue
+        if math.isfinite(x) and math.isfinite(y):
+            pts.append((x, y))
+
     out = []
     last = None
     for x, y in pts:
@@ -125,7 +145,7 @@ def _polygon_to_svg_path(poly, simplify_mm=0.0):
     return d.strip()
 
 def _geom_to_paths(geom, simplify_mm=0.0):
-    from shapely.geometry import Polygon, MultiPolygon, GeometryCollection
+    from shapely.geometry import GeometryCollection
     if geom is None:
         return []
     gt = geom.geom_type
@@ -141,8 +161,13 @@ def _geom_to_paths(geom, simplify_mm=0.0):
     return []
 
 def _extract_cut_lines(fit_g, step_mm=1.0):
-    from shapely.geometry import LineString
+    try:
+        from shapely.geometry import LineString
+    except Exception as e:
+        raise RuntimeError(f"Shapely no disponible: {type(e).__name__} {repr(e)}")
+
     lines = []
+    step_mm = float(step_mm or 1.0)
 
     for el in fit_g.iter():
         if _local_name(el.tag) != "g":
@@ -150,8 +175,9 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
         if el.attrib.get("data-layer") != "Cut":
             continue
 
-        for ch in el:
+        for ch in list(el):
             tag = _local_name(ch.tag)
+
             if tag == "line":
                 x1 = _float(ch.attrib.get("x1"), None)
                 y1 = _float(ch.attrib.get("y1"), None)
@@ -162,20 +188,33 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
                 if abs(x2 - x1) + abs(y2 - y1) < 1e-9:
                     continue
                 lines.append(LineString([(x1, y1), (x2, y2)]))
-            elif tag in ("polyline", "polygon"):
+                continue
+
+            if tag in ("polyline", "polygon"):
                 pts = _parse_points(ch.attrib.get("points", ""))
                 if len(pts) >= 2:
-                    lines.append(LineString(pts))
-                    if tag == "polygon":
-                        if pts[0] != pts[-1]:
+                    try:
+                        lines.append(LineString(pts))
+                    except Exception:
+                        pass
+                    if tag == "polygon" and pts[0] != pts[-1]:
+                        try:
                             lines.append(LineString([pts[-1], pts[0]]))
-            elif tag == "path":
+                        except Exception:
+                            pass
+                continue
+
+            if tag == "path":
                 d = (ch.attrib.get("d") or "").strip()
                 if not d:
                     continue
                 pts = _sample_svg_path_points(d, step_mm=step_mm)
                 if len(pts) >= 2:
-                    lines.append(LineString(pts))
+                    try:
+                        lines.append(LineString(pts))
+                    except Exception:
+                        continue
+                continue
 
     return lines
 
@@ -185,8 +224,15 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     if not tablero:
         return {"ok": False, "error": "Falta tablero_de_troquel"}
 
-    band = float(band_width or 0)
-    gp = float(gap or 0)
+    try:
+        band = float(band_width or 0)
+    except Exception:
+        band = 0.0
+    try:
+        gp = float(gap or 0)
+    except Exception:
+        gp = 0.0
+
     if band <= 0:
         return {"ok": False, "error": "band_width debe ser > 0"}
     if gp < 0:
@@ -199,8 +245,8 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     try:
         root = ET.fromstring(svg_raw)
-    except Exception:
-        return {"ok": False, "error": "No pude parsear el SVG"}
+    except Exception as e:
+        return {"ok": False, "error": f"No pude parsear el SVG: {type(e).__name__} {repr(e)}"}
 
     master = _find_master_group(root)
     if master is None:
@@ -212,28 +258,37 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     try:
         line_geoms = _extract_cut_lines(fit, step_mm=float(sample_step_mm or 1.0))
     except Exception as e:
-        return {"ok": False, "error": f"Error leyendo Cut: {str(e)}"}
+        return {"ok": False, "error": f"Error leyendo Cut: {type(e).__name__} {repr(e)}"}
 
     if not line_geoms:
         g = ET.Element("g", {"id": "gg_rubber_group", "data-layer": "Rubber"})
         fit.append(g)
         return {"ok": True, "svg": ET.tostring(root, encoding="unicode")}
 
-    from shapely.ops import unary_union
+    try:
+        from shapely.ops import unary_union
+    except Exception as e:
+        return {"ok": False, "error": f"Shapely no disponible (ops): {type(e).__name__} {repr(e)}"}
+
     cut_union = _shapely_union_lines(line_geoms)
     if cut_union is None:
         return {"ok": False, "error": "No pude unir geometría de Cut"}
 
-    outer = cut_union.buffer(gp + band, cap_style=1, join_style=1)
-    inner = cut_union.buffer(gp, cap_style=1, join_style=1)
-    rubber = outer.difference(inner)
+    try:
+        outer = cut_union.buffer(gp + band, cap_style=1, join_style=1)
+        inner = cut_union.buffer(gp, cap_style=1, join_style=1)
+        rubber = outer.difference(inner)
+        try:
+            rubber = unary_union(rubber)
+        except Exception:
+            pass
+    except Exception as e:
+        return {"ok": False, "error": f"Error haciendo buffers/difference: {type(e).__name__} {repr(e)}"}
 
     try:
-        rubber = unary_union(rubber)
-    except Exception:
-        pass
-
-    paths = _geom_to_paths(rubber, simplify_mm=float(simplify_mm or 0))
+        paths = _geom_to_paths(rubber, simplify_mm=float(simplify_mm or 0))
+    except Exception as e:
+        return {"ok": False, "error": f"Error convirtiendo a SVG: {type(e).__name__} {repr(e)}"}
 
     g = ET.Element("g", {
         "id": "gg_rubber_group",
