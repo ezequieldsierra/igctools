@@ -1,4 +1,5 @@
 import math
+import time
 import frappe
 from xml.etree import ElementTree as ET
 
@@ -169,11 +170,15 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
     lines = []
     step_mm = float(step_mm or 1.0)
 
+    dbg = {"cut_groups": 0, "line": 0, "poly": 0, "path": 0, "path_sampled": 0}
+
     for el in fit_g.iter():
         if _local_name(el.tag) != "g":
             continue
         if el.attrib.get("data-layer") != "Cut":
             continue
+
+        dbg["cut_groups"] += 1
 
         for ch in list(el):
             tag = _local_name(ch.tag)
@@ -188,6 +193,7 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
                 if abs(x2 - x1) + abs(y2 - y1) < 1e-9:
                     continue
                 lines.append(LineString([(x1, y1), (x2, y2)]))
+                dbg["line"] += 1
                 continue
 
             if tag in ("polyline", "polygon"):
@@ -195,11 +201,13 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
                 if len(pts) >= 2:
                     try:
                         lines.append(LineString(pts))
+                        dbg["poly"] += 1
                     except Exception:
                         pass
                     if tag == "polygon" and pts[0] != pts[-1]:
                         try:
                             lines.append(LineString([pts[-1], pts[0]]))
+                            dbg["poly"] += 1
                         except Exception:
                             pass
                 continue
@@ -208,18 +216,22 @@ def _extract_cut_lines(fit_g, step_mm=1.0):
                 d = (ch.attrib.get("d") or "").strip()
                 if not d:
                     continue
+                dbg["path"] += 1
                 pts = _sample_svg_path_points(d, step_mm=step_mm)
                 if len(pts) >= 2:
+                    dbg["path_sampled"] += 1
                     try:
                         lines.append(LineString(pts))
                     except Exception:
                         continue
                 continue
 
-    return lines
+    return lines, dbg
 
 @frappe.whitelist()
 def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sample_step_mm=1.0, fill="#1f5193", opacity=0.55):
+    t0 = time.time()
+
     tablero = (tablero_de_troquel or "").strip()
     if not tablero:
         return {"ok": False, "error": "Falta tablero_de_troquel"}
@@ -256,14 +268,15 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     _remove_existing_rubber(fit)
 
     try:
-        line_geoms = _extract_cut_lines(fit, step_mm=float(sample_step_mm or 1.0))
+        line_geoms, dbg = _extract_cut_lines(fit, step_mm=float(sample_step_mm or 1.0))
     except Exception as e:
         return {"ok": False, "error": f"Error leyendo Cut: {type(e).__name__} {repr(e)}"}
 
     if not line_geoms:
         g = ET.Element(_q("g"), {"id": "gg_rubber_group", "data-layer": "Rubber"})
         fit.append(g)
-        return {"ok": True, "svg": ET.tostring(root, encoding="unicode")}
+        out_svg = ET.tostring(root, encoding="unicode")
+        return {"ok": True, "svg": out_svg, "debug": {**dbg, "lines_total": 0, "polys": 0, "ms": int((time.time()-t0)*1000)}}
 
     try:
         from shapely.ops import unary_union
@@ -308,4 +321,13 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     fit.append(g)
 
     out_svg = ET.tostring(root, encoding="unicode")
-    return {"ok": True, "svg": out_svg}
+
+    debug = {
+        **dbg,
+        "lines_total": int(len(line_geoms)),
+        "polys": int(len(paths)),
+        "svg_len": int(len(out_svg)),
+        "ms": int((time.time()-t0)*1000)
+    }
+
+    return {"ok": True, "svg": out_svg, "debug": debug}
