@@ -336,8 +336,8 @@ def generar_svg_gomas(
     tablero_de_troquel,
     band_width,
     gap,
-    simplify_mm=0.25,
-    sample_step_mm=0.8,
+    simplify_mm=0.18,
+    sample_step_mm=0.7,
     fill="#1f5193",
     opacity=0.55,
     avoid_crease_mm=1.0
@@ -380,8 +380,8 @@ def generar_svg_gomas(
     from shapely.ops import unary_union
     from shapely.geometry import box
 
-    cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 0.8))
-    crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 0.8))
+    cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 0.7))
+    crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 0.7))
 
     vb0 = _parse_viewbox(root.attrib.get("viewBox"))
     if vb0 is None:
@@ -404,11 +404,16 @@ def generar_svg_gomas(
         out_svg = ET.tostring(root, encoding="unicode")
         return {"ok": True, "svg": out_svg, "debug": {"ms": int((time.time()-t0)*1000), "note": "no_cut"}}
 
-    cap_style = 2
-    join_style = 2
+    cap_style = 1
+    join_style = 1
+
+    cell_pad = max(gp * 0.5, 0.25)
+
+    open_mm = min(max(0.25, band * 0.35), 1.20)
+    if gp <= 0.001:
+        cell_pad = max(cell_pad, 0.35)
 
     rb_all_parts = []
-    cell_pad = max(gp * 0.5, 0.25)
 
     for m in instances:
         cut_inst = _apply_mat_to_geoms(cut_master, m)
@@ -437,6 +442,22 @@ def generar_svg_gomas(
             rb = outer.difference(inner)
         except Exception:
             continue
+
+        if rb.is_empty:
+            continue
+
+        try:
+            rb = rb.buffer(0)
+        except Exception:
+            pass
+
+        if rb.is_empty:
+            continue
+
+        try:
+            rb = rb.buffer(-open_mm, cap_style=cap_style, join_style=join_style).buffer(open_mm, cap_style=cap_style, join_style=join_style)
+        except Exception:
+            pass
 
         if rb.is_empty:
             continue
@@ -471,7 +492,10 @@ def generar_svg_gomas(
                 "ms": int((time.time()-t0)*1000),
                 "instances": int(len(instances)),
                 "note": "no_rubber_generated",
-                "hint": "Cut ok but buffers clipped to empty (check gap/band/avoid_crease_mm)"
+                "band": float(band),
+                "gap": float(gp),
+                "avoid_crease_mm": float(avc),
+                "open_mm": float(open_mm)
             }
         }
 
@@ -486,7 +510,7 @@ def generar_svg_gomas(
         out_svg = ET.tostring(root, encoding="unicode")
         return {"ok": True, "svg": out_svg, "debug": {"ms": int((time.time()-t0)*1000), "note": "rb_union_empty"}}
 
-    paths = _geom_to_paths(rb_all, simplify_mm=float(simplify_mm or 0))
+    paths = _geom_to_paths(rb_all, simplify_mm=float(simplify_mm or 0.18))
 
     g = ET.Element(_q("g"), {
         "id": "gg_rubber_group",
@@ -526,6 +550,9 @@ def generar_svg_gomas(
             "crease_master": int(len(crease_master)),
             "paths": int(len(paths)),
             "cell_pad": float(cell_pad),
-            "mode": "buffer_ring + crease_wall + per_instance_cell_clip"
+            "open_mm": float(open_mm),
+            "cap_style": int(cap_style),
+            "join_style": int(join_style),
+            "mode": "ring + round_join + opening + crease_wall + per_instance_clip"
         }
     }
