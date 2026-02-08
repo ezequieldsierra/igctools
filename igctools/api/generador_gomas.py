@@ -78,7 +78,7 @@ def _parse_points(points_str):
         i += 2
     return pts
 
-def _sample_svg_path_points(d, step_mm=1.0):
+def _sample_svg_path_points(d, step_mm=0.8):
     d = (d or "").strip()
     if not d:
         return []
@@ -93,7 +93,8 @@ def _sample_svg_path_points(d, step_mm=1.0):
         return []
     if not math.isfinite(L) or L <= 1e-9:
         return []
-    n = max(2, int(math.ceil(L / max(0.2, float(step_mm or 1.0)))))
+    step = max(0.25, float(step_mm or 0.8))
+    n = max(3, int(math.ceil(L / step)))
     pts = []
     for i in range(n + 1):
         t = (i / float(n))
@@ -117,10 +118,10 @@ def _sample_svg_path_points(d, step_mm=1.0):
             last = (x, y)
     return out
 
-def _extract_lines_by_layer(fit_g, layer_name, step_mm=1.0):
+def _extract_lines_by_layer(fit_g, layer_name, step_mm=0.8):
     from shapely.geometry import LineString
     lines = []
-    step_mm = float(step_mm or 1.0)
+    step_mm = float(step_mm or 0.8)
 
     for el in fit_g.iter():
         if _local_name(el.tag) != "g":
@@ -330,8 +331,19 @@ def _geom_to_paths(geom, simplify_mm=0.0):
         return out
     return []
 
+def _touches_boundary(polygon, boundary_geom, tol):
+    try:
+        if tol > 0:
+            return polygon.buffer(tol).intersects(boundary_geom)
+        return polygon.intersects(boundary_geom)
+    except Exception:
+        try:
+            return polygon.intersects(boundary_geom)
+        except Exception:
+            return False
+
 @frappe.whitelist()
-def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sample_step_mm=1.0, fill="#1f5193", opacity=0.55, avoid_crease_mm=1.0):
+def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sample_step_mm=0.8, fill="#1f5193", opacity=0.55, avoid_crease_mm=1.0):
     t0 = time.time()
 
     tablero = (tablero_de_troquel or "").strip()
@@ -367,14 +379,13 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     fit = _find_fit_group(master)
 
-    try:
-        from shapely.geometry import box, LineString
-        from shapely.ops import unary_union, polygonize
-    except Exception as e:
-        return {"ok": False, "error": f"Shapely no disponible: {type(e).__name__} {repr(e)}"}
+    from shapely.geometry import box, LineString
+    from shapely.ops import unary_union, polygonize
+    from shapely.ops import linemerge
+    from shapely import set_precision
 
-    cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 1.0))
-    crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 1.0))
+    cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 0.8))
+    crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 0.8))
 
     if not cut_master:
         out_svg = ET.tostring(root, encoding="unicode")
@@ -402,6 +413,9 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     rubber_all = []
 
+    snap_grid = 0.01
+    boundary_tol = 0.25
+
     for m in instances:
         cut_inst = _apply_mat_to_geoms(cut_master, m)
         crease_inst = _apply_mat_to_geoms(crease_master, m) if crease_master else []
@@ -411,6 +425,8 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
         try:
             cut_u = unary_union(cut_inst)
+            cut_u = set_precision(cut_u, snap_grid)
+            cut_u = linemerge(cut_u)
         except Exception:
             cut_u = None
         if cut_u is None or cut_u.is_empty:
@@ -420,20 +436,40 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         if crease_inst:
             try:
                 crease_u = unary_union(crease_inst)
+                crease_u = set_precision(crease_u, snap_grid)
+                crease_u = linemerge(crease_u)
             except Exception:
                 crease_u = None
 
-        pad_env = float(gp + band + max(2.0, avc) + 2.0)
+        pad_env = float(gp + band + max(2.0, avc) + 6.0)
         env_poly = box(vx - pad_env, vy - pad_env, vx + vw + pad_env, vy + vh + pad_env)
         env_ring = LineString(list(env_poly.exterior.coords))
+        env_boundary = env_poly.boundary
 
         barriers = []
-        barriers.extend([ln for ln in cut_inst if ln is not None and (not ln.is_empty)])
-        barriers.extend([ln for ln in crease_inst if ln is not None and (not ln.is_empty)])
+        try:
+            if cut_u.geom_type in ("LineString","MultiLineString"):
+                barriers.append(cut_u)
+            else:
+                barriers.append(cut_u.boundary)
+        except Exception:
+            pass
+
+        if crease_u is not None and (not crease_u.is_empty):
+            try:
+                if crease_u.geom_type in ("LineString","MultiLineString"):
+                    barriers.append(crease_u)
+                else:
+                    barriers.append(crease_u.boundary)
+            except Exception:
+                pass
+
         barriers.append(env_ring)
 
         try:
             merged = unary_union(barriers)
+            merged = set_precision(merged, snap_grid)
+            merged = linemerge(merged)
         except Exception:
             merged = None
         if merged is None or merged.is_empty:
@@ -443,28 +479,44 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         if not polys:
             continue
 
-        env_boundary = env_poly.boundary
-        outside_polys = []
-        for p in polys:
-            try:
-                if p.is_empty:
-                    continue
-                if p.touches(env_boundary) or p.intersects(env_boundary):
-                    outside_polys.append(p)
-            except Exception:
-                pass
+        waste_polys = []
+        product_polys = []
 
-        if not outside_polys:
+        for p in polys:
+            if p.is_empty:
+                continue
+
+            touches_env = _touches_boundary(p, env_boundary, boundary_tol)
+
+            touches_crease = False
+            if crease_u is not None and (not crease_u.is_empty):
+                try:
+                    touches_crease = p.boundary.intersects(crease_u.buffer(boundary_tol))
+                except Exception:
+                    try:
+                        touches_crease = p.intersects(crease_u.buffer(boundary_tol))
+                    except Exception:
+                        touches_crease = False
+
+            if touches_crease:
+                product_polys.append(p)
+            else:
+                if touches_env:
+                    waste_polys.append(p)
+                else:
+                    waste_polys.append(p)
+
+        if not waste_polys:
             continue
 
         try:
-            outside_u = unary_union(outside_polys)
+            waste_u = unary_union(waste_polys)
         except Exception:
-            outside_u = outside_polys[0]
-            for g in outside_polys[1:]:
-                outside_u = outside_u.union(g)
+            waste_u = waste_polys[0]
+            for g in waste_polys[1:]:
+                waste_u = waste_u.union(g)
 
-        if outside_u.is_empty:
+        if waste_u.is_empty:
             continue
 
         try:
@@ -478,7 +530,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
             continue
 
         try:
-            rb = rb.intersection(outside_u)
+            rb = rb.intersection(waste_u)
         except Exception:
             pass
 
@@ -486,11 +538,18 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
             continue
 
         if crease_u is not None and (not crease_u.is_empty):
-            if avc > 0:
-                try:
-                    rb = rb.difference(crease_u.buffer(float(avc), cap_style=cap_style, join_style=join_style))
-                except Exception:
-                    pass
+            try:
+                rb = rb.difference(crease_u.buffer(float(max(avc, 0.001)), cap_style=cap_style, join_style=join_style))
+            except Exception:
+                pass
+
+        if rb.is_empty:
+            continue
+
+        try:
+            rb = rb.intersection(env_poly)
+        except Exception:
+            pass
 
         if rb.is_empty:
             continue
@@ -499,7 +558,9 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     if not rubber_all:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000), "mode": "cell_partition_waste_inside_and_outside"}}
+
+    from shapely.ops import unary_union
 
     try:
         rb_all = unary_union(rubber_all)
@@ -510,7 +571,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     if rb_all.is_empty:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000), "mode": "cell_partition_waste_inside_and_outside"}}
 
     paths = _geom_to_paths(rb_all, simplify_mm=float(simplify_mm or 0))
 
@@ -531,7 +592,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     try:
         minx, miny, maxx, maxy = rb_all.bounds
-        pad = float(gp + band + max(2.0, avc) + 2.0)
+        pad = float(gp + band + max(2.0, avc) + 6.0)
         x1 = min(vx, minx - pad)
         y1 = min(vy, miny - pad)
         x2 = max(vx + vw, maxx + pad)
@@ -550,9 +611,11 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         "svg_len": int(len(out_svg)),
         "ms": int((time.time()-t0)*1000),
         "avoid_crease_mm": float(avc),
-        "mode": "cell_partition_outside_only",
-        "cap_style": cap_style,
-        "join_style": join_style
+        "mode": "cell_partition_waste_inside_and_outside",
+        "snap_grid": float(snap_grid),
+        "boundary_tol": float(boundary_tol),
+        "cap_style": int(cap_style),
+        "join_style": int(join_style)
     }
 
     return {"ok": True, "svg": out_svg, "debug": debug}
