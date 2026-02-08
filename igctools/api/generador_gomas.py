@@ -34,6 +34,13 @@ def _find_first(root, pred):
             return el
     return None
 
+def _find_parent(root, child):
+    for el in root.iter():
+        for ch in list(el):
+            if ch is child:
+                return el
+    return None
+
 def _find_master_group(svg_root):
     return _find_first(svg_root, lambda el: _local_name(el.tag) == "g" and (el.attrib.get("id", "").startswith("gt_master_svg_")))
 
@@ -45,13 +52,6 @@ def _find_fit_group(master_g):
 
 def _find_nest_group(svg_root):
     return _find_first(svg_root, lambda el: _local_name(el.tag) == "g" and (el.attrib.get("id", "").startswith("gt_nest_")))
-
-def _find_parent(root, child):
-    for el in root.iter():
-        for ch in list(el):
-            if ch is child:
-                return el
-    return None
 
 def _remove_existing_rubber_anywhere(svg_root):
     gone = []
@@ -119,7 +119,6 @@ def _sample_svg_path_points(d, step_mm=1.0):
 
 def _extract_lines_by_layer(fit_g, layer_name, step_mm=1.0):
     from shapely.geometry import LineString
-
     lines = []
     step_mm = float(step_mm or 1.0)
 
@@ -304,6 +303,7 @@ def _poly_to_path(poly):
             d.append(f"L {x:.6f} {y:.6f}")
         d.append("Z")
         return " ".join(d)
+
     d = ring(poly.exterior.coords)
     for hole in poly.interiors:
         d += " " + ring(hole.coords)
@@ -329,103 +329,6 @@ def _geom_to_paths(geom, simplify_mm=0.0):
             out.extend(_geom_to_paths(g, simplify_mm=0.0))
         return out
     return []
-
-def _sample_along_line(line, step_mm):
-    L = float(line.length or 0.0)
-    if not math.isfinite(L) or L <= 1e-9:
-        return []
-    n = max(2, int(math.ceil(L / max(0.5, float(step_mm or 2.0)))))
-    pts = []
-    for i in range(n + 1):
-        t = (i / float(n))
-        try:
-            p = line.interpolate(t * L)
-            pts.append(p)
-        except Exception:
-            pass
-    return pts
-
-def _best_side_strip(line, offset_dist, band, cut_union, crease_union, avoid_crease_mm, cap_style, join_style):
-    from shapely.ops import unary_union
-
-    best = None
-    best_score = -1e18
-
-    for side in ("left", "right"):
-        try:
-            off = line.parallel_offset(offset_dist, side=side, join_style=join_style)
-        except Exception:
-            continue
-        if off is None or off.is_empty:
-            continue
-
-        off_lines = []
-        gt = off.geom_type
-        if gt == "LineString":
-            off_lines = [off]
-        elif gt == "MultiLineString":
-            off_lines = list(off.geoms)
-        else:
-            try:
-                off_lines = [g for g in off.geoms if g.geom_type in ("LineString","MultiLineString")]
-            except Exception:
-                off_lines = []
-
-        if not off_lines:
-            continue
-
-        try:
-            strip = unary_union([ol.buffer(band/2.0, cap_style=cap_style, join_style=join_style) for ol in off_lines])
-        except Exception:
-            continue
-
-        if strip.is_empty:
-            continue
-
-        if crease_union is not None and (not crease_union.is_empty) and avoid_crease_mm > 0:
-            try:
-                strip = strip.difference(crease_union.buffer(float(avoid_crease_mm), cap_style=cap_style, join_style=join_style))
-            except Exception:
-                pass
-
-        if strip.is_empty:
-            continue
-
-        pts = []
-        for ol in off_lines:
-            pts.extend(_sample_along_line(ol, step_mm=3.0))
-
-        if not pts:
-            continue
-
-        d_cut = []
-        d_cr = []
-        for p in pts:
-            try:
-                d_cut.append(float(p.distance(cut_union)))
-            except Exception:
-                pass
-            if crease_union is not None and (not crease_union.is_empty):
-                try:
-                    d_cr.append(float(p.distance(crease_union)))
-                except Exception:
-                    pass
-
-        if not d_cut:
-            continue
-
-        min_cut = min(d_cut)
-        avg_cut = sum(d_cut) / max(1, len(d_cut))
-        min_cr = min(d_cr) if d_cr else 1e9
-        avg_cr = (sum(d_cr) / max(1, len(d_cr))) if d_cr else 1e9
-
-        score = (min_cut * 4.0) + (avg_cut * 1.0) + (min_cr * 0.8) + (avg_cr * 0.2)
-
-        if score > best_score:
-            best_score = score
-            best = strip
-
-    return best
 
 @frappe.whitelist()
 def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sample_step_mm=1.0, fill="#1f5193", opacity=0.55, avoid_crease_mm=1.0):
@@ -464,13 +367,16 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     fit = _find_fit_group(master)
 
-    from shapely.ops import unary_union
-    from shapely.geometry import box
+    try:
+        from shapely.geometry import box, LineString
+        from shapely.ops import unary_union, polygonize
+    except Exception as e:
+        return {"ok": False, "error": f"Shapely no disponible: {type(e).__name__} {repr(e)}"}
 
-    cut_lines_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 1.0))
-    crease_lines_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 1.0))
+    cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 1.0))
+    crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 1.0))
 
-    if not cut_lines_master:
+    if not cut_master:
         out_svg = ET.tostring(root, encoding="unicode")
         return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
@@ -479,89 +385,127 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         out_svg = ET.tostring(root, encoding="unicode")
         return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
-    nest = _find_nest_group(root)
+    vx, vy, vw, vh = vb0
 
+    nest = _find_nest_group(root)
     instances = []
     if nest is not None:
         for ch in list(nest):
             if _local_name(ch.tag) != "use":
                 continue
-            m = _parse_transform(ch.attrib.get("transform", "") or "")
-            instances.append(m)
-
+            instances.append(_parse_transform(ch.attrib.get("transform", "") or ""))
     if not instances:
         instances = [(1,0,0,1,0,0)]
 
     cap_style = 2
     join_style = 2
 
-    per_inst_rubber = []
-    vx, vy, vw, vh = vb0
-    envelope = box(vx, vy, vx+vw, vy+vh)
+    rubber_all = []
 
     for m in instances:
-        cut_inst = _apply_mat_to_geoms(cut_lines_master, m)
-        crease_inst = _apply_mat_to_geoms(crease_lines_master, m) if crease_lines_master else []
+        cut_inst = _apply_mat_to_geoms(cut_master, m)
+        crease_inst = _apply_mat_to_geoms(crease_master, m) if crease_master else []
 
-        try:
-            cut_union = unary_union(cut_inst)
-        except Exception:
-            cut_union = None
-        if cut_union is None or cut_union.is_empty:
+        if not cut_inst:
             continue
 
-        crease_union = None
+        try:
+            cut_u = unary_union(cut_inst)
+        except Exception:
+            cut_u = None
+        if cut_u is None or cut_u.is_empty:
+            continue
+
+        crease_u = None
         if crease_inst:
             try:
-                crease_union = unary_union(crease_inst)
+                crease_u = unary_union(crease_inst)
             except Exception:
-                crease_union = None
+                crease_u = None
 
-        strips = []
-        offset_dist = float(gp + (band / 2.0))
+        pad_env = float(gp + band + max(2.0, avc) + 2.0)
+        env_poly = box(vx - pad_env, vy - pad_env, vx + vw + pad_env, vy + vh + pad_env)
+        env_ring = LineString(list(env_poly.exterior.coords))
 
-        for ln in cut_inst:
-            st = _best_side_strip(
-                ln, offset_dist, float(band),
-                cut_union, crease_union,
-                float(avc),
-                cap_style, join_style
-            )
-            if st is not None and (not st.is_empty):
-                strips.append(st)
+        barriers = []
+        barriers.extend([ln for ln in cut_inst if ln is not None and (not ln.is_empty)])
+        barriers.extend([ln for ln in crease_inst if ln is not None and (not ln.is_empty)])
+        barriers.append(env_ring)
 
-        if not strips:
+        try:
+            merged = unary_union(barriers)
+        except Exception:
+            merged = None
+        if merged is None or merged.is_empty:
+            continue
+
+        polys = list(polygonize(merged))
+        if not polys:
+            continue
+
+        env_boundary = env_poly.boundary
+        outside_polys = []
+        for p in polys:
+            try:
+                if p.is_empty:
+                    continue
+                if p.touches(env_boundary) or p.intersects(env_boundary):
+                    outside_polys.append(p)
+            except Exception:
+                pass
+
+        if not outside_polys:
             continue
 
         try:
-            rb = unary_union(strips)
+            outside_u = unary_union(outside_polys)
         except Exception:
-            rb = strips[0]
-            for g in strips[1:]:
-                rb = rb.union(g)
+            outside_u = outside_polys[0]
+            for g in outside_polys[1:]:
+                outside_u = outside_u.union(g)
+
+        if outside_u.is_empty:
+            continue
+
+        try:
+            outer = cut_u.buffer(gp + band, cap_style=cap_style, join_style=join_style)
+            inner = cut_u.buffer(gp, cap_style=cap_style, join_style=join_style)
+            rb = outer.difference(inner)
+        except Exception:
+            continue
 
         if rb.is_empty:
             continue
 
         try:
-            rb = rb.intersection(envelope)
+            rb = rb.intersection(outside_u)
         except Exception:
             pass
 
         if rb.is_empty:
             continue
 
-        per_inst_rubber.append(rb)
+        if crease_u is not None and (not crease_u.is_empty):
+            if avc > 0:
+                try:
+                    rb = rb.difference(crease_u.buffer(float(avc), cap_style=cap_style, join_style=join_style))
+                except Exception:
+                    pass
 
-    if not per_inst_rubber:
+        if rb.is_empty:
+            continue
+
+        rubber_all.append(rb)
+
+    if not rubber_all:
         out_svg = ET.tostring(root, encoding="unicode")
         return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
     try:
-        rb_all = unary_union(per_inst_rubber)
+        rb_all = unary_union(rubber_all)
     except Exception:
-        rb_all = per_inst_rubber[0]
-        for g in per_inst_rubber[1:]:
+        rb_all = rubber_all[0]
+        for g in rubber_all[1:]:
             rb_all = rb_all.union(g)
 
     if rb_all.is_empty:
@@ -587,7 +531,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     try:
         minx, miny, maxx, maxy = rb_all.bounds
-        pad = float(gp + band + 2.0)
+        pad = float(gp + band + max(2.0, avc) + 2.0)
         x1 = min(vx, minx - pad)
         y1 = min(vy, miny - pad)
         x2 = max(vx + vw, maxx + pad)
@@ -600,15 +544,15 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     debug = {
         "instances": int(len(instances)),
-        "cut_master": int(len(cut_lines_master)),
-        "crease_master": int(len(crease_lines_master)),
+        "cut_master": int(len(cut_master)),
+        "crease_master": int(len(crease_master)),
         "polys": int(len(paths)),
         "svg_len": int(len(out_svg)),
         "ms": int((time.time()-t0)*1000),
         "avoid_crease_mm": float(avc),
+        "mode": "cell_partition_outside_only",
         "cap_style": cap_style,
-        "join_style": join_style,
-        "mode": "one_side_per_cut_heuristic"
+        "join_style": join_style
     }
 
     return {"ok": True, "svg": out_svg, "debug": debug}
