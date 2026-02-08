@@ -46,6 +46,13 @@ def _find_fit_group(master_g):
 def _find_nest_group(svg_root):
     return _find_first(svg_root, lambda el: _local_name(el.tag) == "g" and (el.attrib.get("id", "").startswith("gt_nest_")))
 
+def _find_parent(root, child):
+    for el in root.iter():
+        for ch in list(el):
+            if ch is child:
+                return el
+    return None
+
 def _remove_existing_rubber_anywhere(svg_root):
     gone = []
     for el in svg_root.iter():
@@ -55,13 +62,6 @@ def _remove_existing_rubber_anywhere(svg_root):
         parent = _find_parent(svg_root, g)
         if parent is not None:
             parent.remove(g)
-
-def _find_parent(root, child):
-    for el in root.iter():
-        for ch in list(el):
-            if ch is child:
-                return el
-    return None
 
 def _parse_points(points_str):
     s = (points_str or "").strip()
@@ -117,22 +117,20 @@ def _sample_svg_path_points(d, step_mm=1.0):
             last = (x, y)
     return out
 
-def _extract_cut_lines_from_fit(fit_g, step_mm=1.0):
+def _extract_lines_by_layer(fit_g, layer_name, step_mm=1.0):
     try:
         from shapely.geometry import LineString
     except Exception as e:
         raise RuntimeError(f"Shapely no disponible: {type(e).__name__} {repr(e)}")
 
     lines = []
-    dbg = {"cut_groups": 0, "line": 0, "poly": 0, "path": 0, "path_sampled": 0}
     step_mm = float(step_mm or 1.0)
 
     for el in fit_g.iter():
         if _local_name(el.tag) != "g":
             continue
-        if el.attrib.get("data-layer") != "Cut":
+        if el.attrib.get("data-layer") != layer_name:
             continue
-        dbg["cut_groups"] += 1
 
         for ch in list(el):
             tag = _local_name(ch.tag)
@@ -147,7 +145,6 @@ def _extract_cut_lines_from_fit(fit_g, step_mm=1.0):
                 if abs(x2 - x1) + abs(y2 - y1) < 1e-9:
                     continue
                 lines.append(LineString([(x1, y1), (x2, y2)]))
-                dbg["line"] += 1
                 continue
 
             if tag in ("polyline", "polygon"):
@@ -155,13 +152,11 @@ def _extract_cut_lines_from_fit(fit_g, step_mm=1.0):
                 if len(pts) >= 2:
                     try:
                         lines.append(LineString(pts))
-                        dbg["poly"] += 1
                     except Exception:
                         pass
                     if tag == "polygon" and pts[0] != pts[-1]:
                         try:
                             lines.append(LineString([pts[-1], pts[0]]))
-                            dbg["poly"] += 1
                         except Exception:
                             pass
                 continue
@@ -170,17 +165,15 @@ def _extract_cut_lines_from_fit(fit_g, step_mm=1.0):
                 d = (ch.attrib.get("d") or "").strip()
                 if not d:
                     continue
-                dbg["path"] += 1
                 pts = _sample_svg_path_points(d, step_mm=step_mm)
                 if len(pts) >= 2:
-                    dbg["path_sampled"] += 1
                     try:
                         lines.append(LineString(pts))
                     except Exception:
                         continue
                 continue
 
-    return lines, dbg
+    return lines
 
 def _mat_mul(m1, m2):
     a1,b1,c1,d1,e1,f1 = m1
@@ -212,9 +205,9 @@ def _parse_transform(transform_str):
         return (1,0,0,1,0,0)
 
     m = (1,0,0,1,0,0)
-
     i = 0
     n = len(s)
+
     while i < n:
         while i < n and s[i].isspace():
             i += 1
@@ -224,13 +217,15 @@ def _parse_transform(transform_str):
         j = i
         while j < n and s[j].isalpha():
             j += 1
-        fn = s[i:j]
+        fn = s[i:j].lower()
         i = j
+
         while i < n and s[i].isspace():
             i += 1
         if i >= n or s[i] != "(":
             break
         i += 1
+
         k = i
         depth = 1
         while k < n and depth > 0:
@@ -241,6 +236,7 @@ def _parse_transform(transform_str):
                 if depth == 0:
                     break
             k += 1
+
         args_str = s[i:k]
         i = k + 1
 
@@ -250,7 +246,6 @@ def _parse_transform(transform_str):
             if v is not None:
                 args.append(v)
 
-        fn = fn.lower()
         if fn == "translate":
             tx = args[0] if len(args) > 0 else 0.0
             ty = args[1] if len(args) > 1 else 0.0
@@ -273,12 +268,12 @@ def _parse_transform(transform_str):
 
     return m
 
-def _apply_mat_to_lines(lines, m):
+def _apply_mat_to_geoms(geoms, m):
     from shapely.affinity import affine_transform
     a,b,c,d,e,f = m
-    return [affine_transform(g, [a,c,b,d,e,f]) for g in lines]
+    return [affine_transform(g, [a,c,b,d,e,f]) for g in geoms]
 
-def _shapely_union_lines(line_geoms):
+def _union_lines(line_geoms):
     from shapely.ops import unary_union
     if not line_geoms:
         return None
@@ -289,6 +284,26 @@ def _shapely_union_lines(line_geoms):
         for it in line_geoms:
             g = it if g is None else g.union(it)
         return g
+
+def _parse_viewbox(vb):
+    vb = str(vb or "").strip()
+    if not vb:
+        return None
+    parts = [p for p in vb.replace(",", " ").split() if p]
+    if len(parts) != 4:
+        return None
+    x = _float(parts[0], None)
+    y = _float(parts[1], None)
+    w = _float(parts[2], None)
+    h = _float(parts[3], None)
+    if x is None or y is None or w is None or h is None:
+        return None
+    return (x, y, w, h)
+
+def _set_viewbox_and_size(root_svg, x, y, w, h):
+    root_svg.set("viewBox", f"{x:.6f} {y:.6f} {w:.6f} {h:.6f}")
+    root_svg.set("width", f"{w:.6f}mm")
+    root_svg.set("height", f"{h:.6f}mm")
 
 def _geom_to_paths(geom, simplify_mm=0.0):
     from shapely.geometry import GeometryCollection
@@ -330,57 +345,8 @@ def _poly_to_path(poly):
         d += " " + ring(hole.coords)
     return d.strip()
 
-def _parse_viewbox(vb):
-    vb = str(vb or "").strip()
-    if not vb:
-        return None
-    parts = [p for p in vb.replace(",", " ").split() if p]
-    if len(parts) != 4:
-        return None
-    x = _float(parts[0], None)
-    y = _float(parts[1], None)
-    w = _float(parts[2], None)
-    h = _float(parts[3], None)
-    if x is None or y is None or w is None or h is None:
-        return None
-    return (x, y, w, h)
-
-def _set_viewbox_and_size(root_svg, x, y, w, h):
-    root_svg.set("viewBox", f"{x:.6f} {y:.6f} {w:.6f} {h:.6f}")
-    root_svg.set("width", f"{w:.6f}mm")
-    root_svg.set("height", f"{h:.6f}mm")
-
-def _safe_voronoi_cells(points, envelope_poly):
-    try:
-        from shapely.geometry import MultiPoint
-        from shapely.ops import voronoi_diagram
-        mp = MultiPoint(points)
-        vc = voronoi_diagram(mp, envelope=envelope_poly, edges=False)
-        geoms = list(vc.geoms) if hasattr(vc, "geoms") else []
-        cells = {}
-        for poly in geoms:
-            owner = None
-            for idx, pt in enumerate(points):
-                if poly.contains(pt) or poly.touches(pt):
-                    owner = idx
-                    break
-            if owner is None:
-                c = poly.representative_point()
-                best_i = 0
-                best_d = c.distance(points[0])
-                for i in range(1, len(points)):
-                    d = c.distance(points[i])
-                    if d < best_d:
-                        best_d = d
-                        best_i = i
-                owner = best_i
-            cells[owner] = poly if owner not in cells else cells[owner].union(poly)
-        return cells
-    except Exception:
-        return None
-
 @frappe.whitelist()
-def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sample_step_mm=1.0, fill="#1f5193", opacity=0.55):
+def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sample_step_mm=1.0, fill="#1f5193", opacity=0.55, avoid_crease_mm=1.0):
     t0 = time.time()
 
     tablero = (tablero_de_troquel or "").strip()
@@ -389,11 +355,14 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     band = _float(band_width, 0.0) or 0.0
     gp = _float(gap, 0.0) or 0.0
+    avc = _float(avoid_crease_mm, 0.0) or 0.0
 
     if band <= 0:
         return {"ok": False, "error": "band_width debe ser > 0"}
     if gp < 0:
         return {"ok": False, "error": "gap no puede ser negativo"}
+    if avc < 0:
+        avc = 0.0
 
     svg_raw = frappe.db.get_value("Tablero de Troquel", tablero, "svg_montaje")
     svg_raw = (svg_raw or "").strip()
@@ -414,24 +383,22 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     fit = _find_fit_group(master)
 
     try:
-        master_lines, dbg = _extract_cut_lines_from_fit(fit, step_mm=float(sample_step_mm or 1.0))
+        cut_lines_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 1.0))
+        crease_lines_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 1.0))
     except Exception as e:
-        return {"ok": False, "error": f"Error leyendo Cut: {type(e).__name__} {repr(e)}"}
+        return {"ok": False, "error": f"Error leyendo layers: {type(e).__name__} {repr(e)}"}
 
-    if not master_lines:
+    if not cut_lines_master:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {**dbg, "instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
     vb0 = _parse_viewbox(root.attrib.get("viewBox"))
     if vb0 is None:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {**dbg, "instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
-    from shapely.geometry import box, Point
     from shapely.ops import unary_union
-
-    vx, vy, vw, vh = vb0
-    envelope = box(vx, vy, vx+vw, vy+vh)
+    from shapely.geometry import box
 
     nest = _find_nest_group(root)
 
@@ -440,70 +407,82 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
         for ch in list(nest):
             if _local_name(ch.tag) != "use":
                 continue
-            tr = ch.attrib.get("transform", "") or ""
-            m = _parse_transform(tr)
+            m = _parse_transform(ch.attrib.get("transform", "") or "")
             instances.append(m)
 
     if not instances:
         instances = [(1,0,0,1,0,0)]
 
-    rubber_list = []
-    centroids = []
-    per_inst_dbg = []
-
     cap_style = 2
     join_style = 2
 
+    rubber_all = []
+    region_all = []
+
     for m in instances:
-        inst_lines = _apply_mat_to_lines(master_lines, m)
-        cut_union = _shapely_union_lines(inst_lines)
-        if cut_union is None:
+        cut_inst = _apply_mat_to_geoms(cut_lines_master, m)
+        cut_u = _union_lines(cut_inst)
+        if cut_u is None or cut_u.is_empty:
             continue
 
+        crease_u = None
+        if crease_lines_master:
+            crease_inst = _apply_mat_to_geoms(crease_lines_master, m)
+            crease_u = _union_lines(crease_inst)
+
         try:
-            outer = cut_union.buffer(gp + band, cap_style=cap_style, join_style=join_style)
-            inner = cut_union.buffer(gp, cap_style=cap_style, join_style=join_style)
-            rubber = outer.difference(inner)
-            rubber = unary_union(rubber)
+            outer = cut_u.buffer(gp + band, cap_style=cap_style, join_style=join_style)
+            inner = cut_u.buffer(gp, cap_style=cap_style, join_style=join_style)
+            rb = outer.difference(inner)
+            rb = unary_union(rb)
         except Exception:
             continue
 
-        if rubber.is_empty:
+        if rb.is_empty:
+            continue
+
+        if crease_u is not None and (not crease_u.is_empty) and avc > 0:
+            try:
+                forbid = crease_u.buffer(avc, cap_style=cap_style, join_style=join_style)
+                rb = rb.difference(forbid)
+                rb = unary_union(rb)
+            except Exception:
+                pass
+
+        if rb.is_empty:
             continue
 
         try:
-            c = cut_union.centroid
+            region = cut_u.buffer(gp + band + 0.01, cap_style=cap_style, join_style=join_style)
+            region = region.envelope
         except Exception:
-            b = cut_union.bounds
-            c = Point((b[0]+b[2])/2.0, (b[1]+b[3])/2.0)
+            region = None
 
-        centroids.append(c)
-        rubber_list.append(rubber)
+        if region is not None and (not region.is_empty):
+            try:
+                rb = rb.intersection(region)
+            except Exception:
+                pass
 
-    if not rubber_list:
+        if rb.is_empty:
+            continue
+
+        rubber_all.append(rb)
+        if region is not None and (not region.is_empty):
+            region_all.append(region)
+
+    if not rubber_all:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {**dbg, "instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
 
-    cells = _safe_voronoi_cells(centroids, envelope)
+    try:
+        rb_all = unary_union(rubber_all)
+    except Exception:
+        rb_all = rubber_all[0]
+        for g in rubber_all[1:]:
+            rb_all = rb_all.union(g)
 
-    clipped = []
-    if cells:
-        for i, rb in enumerate(rubber_list):
-            cell = cells.get(i)
-            if cell is None:
-                clipped.append(rb.intersection(envelope))
-            else:
-                clipped.append(rb.intersection(cell))
-    else:
-        clipped = [rb.intersection(envelope) for rb in rubber_list]
-
-    all_rubber = unary_union([g for g in clipped if g is not None and not g.is_empty])
-
-    if all_rubber.is_empty:
-        out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {**dbg, "instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
-
-    paths = _geom_to_paths(all_rubber, simplify_mm=float(simplify_mm or 0))
+    paths = _geom_to_paths(rb_all, simplify_mm=float(simplify_mm or 0))
 
     g = ET.Element(_q("g"), {
         "id": "gg_rubber_group",
@@ -520,8 +499,9 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
 
     root.append(g)
 
+    vx, vy, vw, vh = vb0
     try:
-        minx, miny, maxx, maxy = all_rubber.bounds
+        minx, miny, maxx, maxy = rb_all.bounds
         pad = float(gp + band + 2.0)
         x1 = min(vx, minx - pad)
         y1 = min(vy, miny - pad)
@@ -534,12 +514,13 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.25, sam
     out_svg = ET.tostring(root, encoding="unicode")
 
     debug = {
-        **dbg,
         "instances": int(len(instances)),
+        "cut_master": int(len(cut_lines_master)),
+        "crease_master": int(len(crease_lines_master)),
         "polys": int(len(paths)),
         "svg_len": int(len(out_svg)),
         "ms": int((time.time()-t0)*1000),
-        "voronoi": bool(cells is not None),
+        "avoid_crease_mm": avc,
         "cap_style": cap_style,
         "join_style": join_style
     }
