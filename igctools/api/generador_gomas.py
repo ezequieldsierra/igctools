@@ -331,19 +331,17 @@ def _geom_to_paths(geom, simplify_mm=0.0):
         return out
     return []
 
-def _touches_boundary(polygon, boundary_geom, tol):
-    try:
-        if tol > 0:
-            return polygon.buffer(tol).intersects(boundary_geom)
-        return polygon.intersects(boundary_geom)
-    except Exception:
-        try:
-            return polygon.intersects(boundary_geom)
-        except Exception:
-            return False
-
 @frappe.whitelist()
-def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sample_step_mm=0.8, fill="#1f5193", opacity=0.55, avoid_crease_mm=1.0):
+def generar_svg_gomas(
+    tablero_de_troquel,
+    band_width,
+    gap,
+    simplify_mm=0.25,
+    sample_step_mm=0.8,
+    fill="#1f5193",
+    opacity=0.55,
+    avoid_crease_mm=1.0
+):
     t0 = time.time()
 
     tablero = (tablero_de_troquel or "").strip()
@@ -379,22 +377,16 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
 
     fit = _find_fit_group(master)
 
-    from shapely.geometry import box, LineString
-    from shapely.ops import unary_union, polygonize
-    from shapely.ops import linemerge
-    from shapely import set_precision
+    from shapely.ops import unary_union
+    from shapely.geometry import box
 
     cut_master = _extract_lines_by_layer(fit, "Cut", step_mm=float(sample_step_mm or 0.8))
     crease_master = _extract_lines_by_layer(fit, "Crease", step_mm=float(sample_step_mm or 0.8))
 
-    if not cut_master:
-        out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
-
     vb0 = _parse_viewbox(root.attrib.get("viewBox"))
     if vb0 is None:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": 0, "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000)}}
+        return {"ok": True, "svg": out_svg, "debug": {"ms": int((time.time()-t0)*1000), "note": "no_viewbox"}}
 
     vx, vy, vw, vh = vb0
 
@@ -408,116 +400,36 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
     if not instances:
         instances = [(1,0,0,1,0,0)]
 
+    if not cut_master:
+        out_svg = ET.tostring(root, encoding="unicode")
+        return {"ok": True, "svg": out_svg, "debug": {"ms": int((time.time()-t0)*1000), "note": "no_cut"}}
+
     cap_style = 2
     join_style = 2
 
-    rubber_all = []
-
-    snap_grid = 0.01
-    boundary_tol = 0.25
+    rb_all_parts = []
+    cell_pad = max(gp * 0.5, 0.25)
 
     for m in instances:
         cut_inst = _apply_mat_to_geoms(cut_master, m)
-        crease_inst = _apply_mat_to_geoms(crease_master, m) if crease_master else []
-
         if not cut_inst:
             continue
 
         try:
             cut_u = unary_union(cut_inst)
-            cut_u = set_precision(cut_u, snap_grid)
-            cut_u = linemerge(cut_u)
         except Exception:
-            cut_u = None
-        if cut_u is None or cut_u.is_empty:
+            continue
+        if cut_u.is_empty:
             continue
 
         crease_u = None
-        if crease_inst:
-            try:
-                crease_u = unary_union(crease_inst)
-                crease_u = set_precision(crease_u, snap_grid)
-                crease_u = linemerge(crease_u)
-            except Exception:
-                crease_u = None
-
-        pad_env = float(gp + band + max(2.0, avc) + 6.0)
-        env_poly = box(vx - pad_env, vy - pad_env, vx + vw + pad_env, vy + vh + pad_env)
-        env_ring = LineString(list(env_poly.exterior.coords))
-        env_boundary = env_poly.boundary
-
-        barriers = []
-        try:
-            if cut_u.geom_type in ("LineString","MultiLineString"):
-                barriers.append(cut_u)
-            else:
-                barriers.append(cut_u.boundary)
-        except Exception:
-            pass
-
-        if crease_u is not None and (not crease_u.is_empty):
-            try:
-                if crease_u.geom_type in ("LineString","MultiLineString"):
-                    barriers.append(crease_u)
-                else:
-                    barriers.append(crease_u.boundary)
-            except Exception:
-                pass
-
-        barriers.append(env_ring)
-
-        try:
-            merged = unary_union(barriers)
-            merged = set_precision(merged, snap_grid)
-            merged = linemerge(merged)
-        except Exception:
-            merged = None
-        if merged is None or merged.is_empty:
-            continue
-
-        polys = list(polygonize(merged))
-        if not polys:
-            continue
-
-        waste_polys = []
-        product_polys = []
-
-        for p in polys:
-            if p.is_empty:
-                continue
-
-            touches_env = _touches_boundary(p, env_boundary, boundary_tol)
-
-            touches_crease = False
-            if crease_u is not None and (not crease_u.is_empty):
+        if crease_master:
+            crease_inst = _apply_mat_to_geoms(crease_master, m)
+            if crease_inst:
                 try:
-                    touches_crease = p.boundary.intersects(crease_u.buffer(boundary_tol))
+                    crease_u = unary_union(crease_inst)
                 except Exception:
-                    try:
-                        touches_crease = p.intersects(crease_u.buffer(boundary_tol))
-                    except Exception:
-                        touches_crease = False
-
-            if touches_crease:
-                product_polys.append(p)
-            else:
-                if touches_env:
-                    waste_polys.append(p)
-                else:
-                    waste_polys.append(p)
-
-        if not waste_polys:
-            continue
-
-        try:
-            waste_u = unary_union(waste_polys)
-        except Exception:
-            waste_u = waste_polys[0]
-            for g in waste_polys[1:]:
-                waste_u = waste_u.union(g)
-
-        if waste_u.is_empty:
-            continue
+                    crease_u = None
 
         try:
             outer = cut_u.buffer(gp + band, cap_style=cap_style, join_style=join_style)
@@ -529,17 +441,9 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
         if rb.is_empty:
             continue
 
-        try:
-            rb = rb.intersection(waste_u)
-        except Exception:
-            pass
-
-        if rb.is_empty:
-            continue
-
         if crease_u is not None and (not crease_u.is_empty):
             try:
-                rb = rb.difference(crease_u.buffer(float(max(avc, 0.001)), cap_style=cap_style, join_style=join_style))
+                rb = rb.difference(crease_u.buffer(max(avc, 0.001), cap_style=cap_style, join_style=join_style))
             except Exception:
                 pass
 
@@ -547,31 +451,40 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
             continue
 
         try:
-            rb = rb.intersection(env_poly)
+            minx, miny, maxx, maxy = cut_u.bounds
+            cell = box(minx - cell_pad, miny - cell_pad, maxx + cell_pad, maxy + cell_pad)
+            rb = rb.intersection(cell)
         except Exception:
             pass
 
         if rb.is_empty:
             continue
 
-        rubber_all.append(rb)
+        rb_all_parts.append(rb)
 
-    if not rubber_all:
+    if not rb_all_parts:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000), "mode": "cell_partition_waste_inside_and_outside"}}
-
-    from shapely.ops import unary_union
+        return {
+            "ok": True,
+            "svg": out_svg,
+            "debug": {
+                "ms": int((time.time()-t0)*1000),
+                "instances": int(len(instances)),
+                "note": "no_rubber_generated",
+                "hint": "Cut ok but buffers clipped to empty (check gap/band/avoid_crease_mm)"
+            }
+        }
 
     try:
-        rb_all = unary_union(rubber_all)
+        rb_all = unary_union(rb_all_parts)
     except Exception:
-        rb_all = rubber_all[0]
-        for g in rubber_all[1:]:
+        rb_all = rb_all_parts[0]
+        for g in rb_all_parts[1:]:
             rb_all = rb_all.union(g)
 
     if rb_all.is_empty:
         out_svg = ET.tostring(root, encoding="unicode")
-        return {"ok": True, "svg": out_svg, "debug": {"instances": len(instances), "polys": 0, "svg_len": len(out_svg), "ms": int((time.time()-t0)*1000), "mode": "cell_partition_waste_inside_and_outside"}}
+        return {"ok": True, "svg": out_svg, "debug": {"ms": int((time.time()-t0)*1000), "note": "rb_union_empty"}}
 
     paths = _geom_to_paths(rb_all, simplify_mm=float(simplify_mm or 0))
 
@@ -592,7 +505,7 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
 
     try:
         minx, miny, maxx, maxy = rb_all.bounds
-        pad = float(gp + band + max(2.0, avc) + 6.0)
+        pad = float(gp + band + max(2.0, avc) + 4.0)
         x1 = min(vx, minx - pad)
         y1 = min(vy, miny - pad)
         x2 = max(vx + vw, maxx + pad)
@@ -603,19 +516,16 @@ def generar_svg_gomas(tablero_de_troquel, band_width, gap, simplify_mm=0.35, sam
 
     out_svg = ET.tostring(root, encoding="unicode")
 
-    debug = {
-        "instances": int(len(instances)),
-        "cut_master": int(len(cut_master)),
-        "crease_master": int(len(crease_master)),
-        "polys": int(len(paths)),
-        "svg_len": int(len(out_svg)),
-        "ms": int((time.time()-t0)*1000),
-        "avoid_crease_mm": float(avc),
-        "mode": "cell_partition_waste_inside_and_outside",
-        "snap_grid": float(snap_grid),
-        "boundary_tol": float(boundary_tol),
-        "cap_style": int(cap_style),
-        "join_style": int(join_style)
+    return {
+        "ok": True,
+        "svg": out_svg,
+        "debug": {
+            "ms": int((time.time()-t0)*1000),
+            "instances": int(len(instances)),
+            "cut_master": int(len(cut_master)),
+            "crease_master": int(len(crease_master)),
+            "paths": int(len(paths)),
+            "cell_pad": float(cell_pad),
+            "mode": "buffer_ring + crease_wall + per_instance_cell_clip"
+        }
     }
-
-    return {"ok": True, "svg": out_svg, "debug": debug}
