@@ -28,11 +28,37 @@ VECTOR_ONLY = True            # elimina images/masks/clipPaths/filters/patterns/
 # =======================
 # Utilidades
 # =======================
-def _pdf_file_bytes_from_file_url(file_url: str) -> bytes:
+def _pdf_file_bytes_from_printcard(pc_doc) -> bytes:
+    """
+    Obtiene bytes del PDF del PrintCard de forma determinística.
+    Solo usa el File adjunto al propio PrintCard para evitar cruces
+    entre documentos con el mismo file_url.
+    """
+    if not pc_doc:
+        return b""
+
+    file_url = (pc_doc.get("archivo") or "").strip()
     if not file_url:
         return b""
-    file_doc = frappe.get_doc("File", {"file_url": file_url})
-    return file_doc.get_content() or b""
+
+    # Camino principal: archivo realmente adjunto al PrintCard.
+    attached = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "PrintCard",
+            "attached_to_name": pc_doc.name,
+            "file_url": file_url,
+            "is_folder": 0,
+        },
+        fields=["name"],
+        order_by="creation desc",
+        limit=1,
+    )
+    if attached:
+        file_doc = frappe.get_doc("File", attached[0].name)
+        return file_doc.get_content() or b""
+
+    return b""
 
 def _strip_metadata(s: str) -> str:
     if not REMOVE_METADATA_TAGS:
@@ -224,11 +250,10 @@ def auto_svg_from_printcard(doc, method):
             return
 
         pc = frappe.get_doc("PrintCard", pc_name)
-        file_url = (pc.get("archivo") or "").strip()
-        if not file_url:
+        if not (pc.get("archivo") or "").strip():
             return
 
-        pdf_bytes = _pdf_file_bytes_from_file_url(file_url)
+        pdf_bytes = _pdf_file_bytes_from_printcard(pc)
         if not pdf_bytes:
             return
 
@@ -265,11 +290,10 @@ def _update_one_project_svg(proj_name: str, force: bool = False) -> dict:
         return {"project": proj_name, "skipped": True, "reason": "has_svg"}
 
     pc = frappe.get_doc("PrintCard", pc_name)
-    file_url = (pc.get("archivo") or "").strip()
-    if not file_url:
+    if not (pc.get("archivo") or "").strip():
         return {"project": proj_name, "skipped": True, "reason": "no_pdf"}
 
-    pdf_bytes = _pdf_file_bytes_from_file_url(file_url)
+    pdf_bytes = _pdf_file_bytes_from_printcard(pc)
     if MODE == "RASTER_WRAPPER":
         svg = _pdf_first_page_to_raster_wrapper_svg(pdf_bytes)
     elif MODE == "VECTOR_SIMPLIFIED":
