@@ -35,14 +35,15 @@ repos:
     hooks:
       - id: prettier
         types_or: [javascript, vue, scss]
-        # Ignore any files that might contain jinja / bundles
+        # Ignore Jinja templates and third-party bundles, including compiled face-api.
         exclude: |
             (?x)^(
                 igctools/public/dist/.*|
                 .*node_modules.*|
                 .*boilerplate.*|
                 igctools/templates/includes/.*|
-                igctools/public/js/lib/.*
+                igctools/public/js/lib/.*|
+                igctools/public/face/face-api\.min\.js
             )$
 
 
@@ -52,7 +53,7 @@ repos:
       - id: eslint
         types_or: [javascript]
         args: ['--quiet']
-        # Ignore any files that might contain jinja / bundles
+        # Ignore Jinja templates and third-party bundles, including compiled face-api.
         exclude: |
             (?x)^(
                 igctools/public/dist/.*|
@@ -60,7 +61,8 @@ repos:
                 .*node_modules.*|
                 .*boilerplate.*|
                 igctools/templates/includes/.*|
-                igctools/public/js/lib/.*
+                igctools/public/js/lib/.*|
+                igctools/public/face/face-api\.min\.js
             )$
 
 ci:
