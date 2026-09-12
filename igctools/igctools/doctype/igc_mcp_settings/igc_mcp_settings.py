@@ -6,6 +6,22 @@ from frappe.model.document import Document
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 
 
+def is_connector_client(client):
+	# Standard Frappe 15 has no token_endpoint_auth_method field. The MCP
+	# adapter provides public-client authentication through mandatory S256 PKCE.
+	if client.meta.has_field("token_endpoint_auth_method"):
+		if client.get("token_endpoint_auth_method") != "None":
+			return False
+	return (
+		client.default_redirect_uri == CALLBACK
+		and (client.redirect_uris or "").strip() == CALLBACK
+		and client.grant_type == "Authorization Code"
+		and client.response_type == "Code"
+		and set((client.scopes or "").split()) == {"all"}
+		and not client.skip_authorization
+	)
+
+
 class IGCMCPSettings(Document):
 	def validate(self):
 		if not self.enabled:
@@ -28,7 +44,6 @@ class IGCMCPSettings(Document):
 				{
 					"doctype": "OAuth Client",
 					"app_name": "IGCTools ChatGPT",
-					"token_endpoint_auth_method": "None",
 					"grant_type": "Authorization Code",
 					"response_type": "Code",
 					"redirect_uris": CALLBACK,
@@ -37,14 +52,12 @@ class IGCMCPSettings(Document):
 					"skip_authorization": 0,
 				}
 			)
+			if client.meta.has_field("token_endpoint_auth_method"):
+				client.token_endpoint_auth_method = "None"
 			client.insert()
 			self.oauth_client = client.name
 		client = frappe.get_doc("OAuth Client", self.oauth_client)
-		if (
-			client.get("token_endpoint_auth_method") != "None"
-			or client.default_redirect_uri != CALLBACK
-			or client.redirect_uris.strip() != CALLBACK
-		):
+		if not is_connector_client(client):
 			frappe.throw("Use a dedicated public OAuth client with the ChatGPT callback URL.")
 		self.oauth_client_id = client.client_id
 		self.server_url = self.site_url + "/api/method/igctools.mcp.handle"
