@@ -63,8 +63,14 @@ def connection_info():
 		"site": frappe.local.site,
 		"user": frappe.session.user,
 		"frappe_version": frappe.__version__,
-		"supported_documents": list(SCRIPT_TYPES),
-		"executes_scripts": False,
+		"supported_documents": [*SCRIPT_TYPES, "Print Format"],
+		"executes_scripts": True,
+		"connector_version": "2.0.0",
+		"system_console": {
+			"execution": "background_job",
+			"default_commit": False,
+			"output_tool": "read_console_output",
+		},
 	}
 
 
