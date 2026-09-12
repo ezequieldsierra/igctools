@@ -63,3 +63,8 @@ typing-modules = ["frappe.types.DF"]
 quote-style = "double"
 indent-style = "tab"
 docstring-code-format = true
+
+
+# Frappe Cloud compatibility for the v15 app and script connector.
+[tool.bench.frappe-dependencies]
+frappe = ">=15.83.0,<16.0.0"
