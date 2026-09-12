@@ -66,9 +66,8 @@ def _to_pt(value: str) -> str:
 		return f"{n * PX_TO_PT}pt"
 
 	if unit == "":
-		if INTERPRET_UNITLESS_AS == "px":
-			return f"{n * PX_TO_PT}pt"
-		return f"{n}pt"
+		factor = {"px": PX_TO_PT}.get(INTERPRET_UNITLESS_AS, 1.0)
+		return f"{n * factor}pt"
 
 	return v
 
@@ -640,7 +639,7 @@ def export_generador_troquel_pdf(
 	is_private: int = 0,
 ):
 	if not svg:
-		frappe.throw("SVG requerido.")
+		frappe.throw(frappe._("SVG requerido."))
 
 	if not width_mm or not height_mm:
 		width_mm, height_mm = _get_svg_mm_size(svg)
@@ -675,7 +674,8 @@ def export_generador_troquel_pdf(
 		}
 	)
 	filedoc.insert(ignore_permissions=True)
-	frappe.db.commit()
+	# Preserve the export API contract: the new File is persisted before its download URL is returned.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
@@ -689,7 +689,7 @@ def export_generador_troquel_svg(
 	is_private: int = 0,
 ):
 	if not svg:
-		frappe.throw("SVG requerido.")
+		frappe.throw(frappe._("SVG requerido."))
 
 	if not width_mm or not height_mm:
 		width_mm, height_mm = _get_svg_mm_size(svg)
@@ -717,7 +717,8 @@ def export_generador_troquel_svg(
 		}
 	)
 	filedoc.insert(ignore_permissions=True)
-	frappe.db.commit()
+	# Preserve the export API contract: the new File is persisted before its download URL is returned.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
@@ -731,10 +732,10 @@ def export_generador_troquel_dxf(
 	is_private: int = 0,
 ):
 	if not svg:
-		frappe.throw("SVG requerido.")
+		frappe.throw(frappe._("SVG requerido."))
 
 	if not _HAS_DXF:
-		frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
+		frappe.throw(frappe._("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools."))
 
 	if not width_mm or not height_mm:
 		width_mm, height_mm = _get_svg_mm_size(svg)
@@ -753,7 +754,7 @@ def export_generador_troquel_dxf(
 	else:
 		vb = [float(x) for x in re.split(r"[ ,]+", vb_attr.strip()) if x]
 		if len(vb) != 4:
-			frappe.throw("viewBox inválido en SVG.")
+			frappe.throw(frappe._("viewBox inválido en SVG."))
 		minx, miny, vbw, vbh = vb
 
 	viewbox = (minx, miny, vbw, vbh)
@@ -1019,7 +1020,8 @@ def export_generador_troquel_dxf(
 		}
 	)
 	filedoc.insert(ignore_permissions=True)
-	frappe.db.commit()
+	# Preserve the export API contract: the new File is persisted before its download URL is returned.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
@@ -1033,10 +1035,10 @@ def export_generador_troquel_dxf_v2(
 	is_private: int = 0,
 ):
 	if not svg:
-		frappe.throw("SVG requerido.")
+		frappe.throw(frappe._("SVG requerido."))
 
 	if not _HAS_DXF:
-		frappe.throw("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools.")
+		frappe.throw(frappe._("Dependencias DXF no disponibles. Instala ezdxf y svgpathtools."))
 
 	if not width_mm or not height_mm:
 		width_mm, height_mm = _get_svg_mm_size(svg)
@@ -1052,7 +1054,7 @@ def export_generador_troquel_dxf_v2(
 	else:
 		vb = [float(x) for x in re.split(r"[ ,]+", vb_attr.strip()) if x]
 		if len(vb) != 4:
-			frappe.throw("viewBox inválido en SVG.")
+			frappe.throw(frappe._("viewBox inválido en SVG."))
 		minx, miny, vbw, vbh = vb
 
 	viewbox = (minx, miny, vbw, vbh)
@@ -1311,7 +1313,8 @@ def export_generador_troquel_dxf_v2(
 		}
 	)
 	filedoc.insert(ignore_permissions=True)
-	frappe.db.commit()
+	# Preserve the export API contract: the new File is persisted before its download URL is returned.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
 
 
@@ -1733,7 +1736,7 @@ def export_hoja_de_arreglo_pdf(
 ):
 	"""Exporta el SVG de Hoja de Arreglo (tablero + montaje) a PDF. Sin dedup ni layer CSS."""
 	if not svg:
-		frappe.throw("SVG requerido.")
+		frappe.throw(frappe._("SVG requerido."))
 
 	if not width_mm or not height_mm:
 		width_mm, height_mm = _get_svg_mm_size(svg)
@@ -1766,5 +1769,6 @@ def export_hoja_de_arreglo_pdf(
 		}
 	)
 	filedoc.insert(ignore_permissions=True)
-	frappe.db.commit()
+	# Preserve the export API contract: the new File is persisted before its download URL is returned.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}

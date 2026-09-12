@@ -315,7 +315,8 @@ def validate_request(settings, authorization=False):
 			raise frappe.ValidationError("OAuth state is required.")
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET"])
+# Guest can only reach login; consent requires the configured user and validated OAuth parameters.
+@frappe.whitelist(allow_guest=True, methods=["GET"])  # nosemgrep: guest-whitelisted-method
 def authorize(**kwargs):
 	settings = get_settings()
 	validate_request(settings, authorization=True)
@@ -353,7 +354,8 @@ def authorize(**kwargs):
 	)
 	from frappe.sessions import get_csrf_token
 
-	html = frappe.render_template(
+	# Template path is a literal app asset; escaped context contains validated OAuth URLs and CSRF token.
+	html = frappe.render_template(  # nosemgrep: frappe-ssti
 		"templates/igctools_mcp_consent.html",
 		{"success_url": success, "failure_url": failure, "csrf_token": get_csrf_token()},
 	)
@@ -385,7 +387,8 @@ def approve(**kwargs):
 	frappe.local.response.update({"type": "redirect", "location": location})
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
+# Public OAuth token endpoint validates client, resource and PKCE/code or rotating refresh token.
+@frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
 def token(**kwargs):
 	from igctools.mcp import response
 

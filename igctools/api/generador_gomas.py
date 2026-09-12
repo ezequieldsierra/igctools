@@ -365,14 +365,14 @@ def _geom_to_paths(geom, simplify_mm=0.0):
 
 @frappe.whitelist()
 def generar_svg_gomas(
-	tablero_de_troquel,
-	band_width,
-	gap,
-	simplify_mm=0.18,
-	sample_step_mm=0.7,
-	fill="#1f5193",
-	opacity=0.55,
-	avoid_crease_mm=1.0,
+	tablero_de_troquel: str,
+	band_width: float | str | None,
+	gap: float | str | None,
+	simplify_mm: float | str | None = 0.18,
+	sample_step_mm: float | str | None = 0.7,
+	fill: str = "#1f5193",
+	opacity: float | str | None = 0.55,
+	avoid_crease_mm: float | str | None = 1.0,
 ):
 	t0 = time.time()
 

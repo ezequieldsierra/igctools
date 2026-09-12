@@ -11,7 +11,7 @@ import frappe
 @frappe.whitelist()
 def pdf_page1_to_png_dataurl(pdf_b64: str, zoom: float = 2.0):
 	if not pdf_b64:
-		frappe.throw("PDF vacío")
+		frappe.throw(frappe._("PDF vacío"))
 
 	m = re.match(r"^data:application\/pdf;base64,(.+)$", pdf_b64.strip())
 	b64 = m.group(1) if m else pdf_b64.strip()
@@ -20,7 +20,7 @@ def pdf_page1_to_png_dataurl(pdf_b64: str, zoom: float = 2.0):
 
 	doc = fitz.open(stream=raw, filetype="pdf")
 	if doc.page_count < 1:
-		frappe.throw("PDF sin páginas")
+		frappe.throw(frappe._("PDF sin páginas"))
 
 	page = doc.load_page(0)
 	rect = page.rect

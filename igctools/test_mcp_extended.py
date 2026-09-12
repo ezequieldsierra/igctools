@@ -137,6 +137,8 @@ class TestExtendedMCP(TestScriptMCP):
 			with self.assertRaises(frappe.PermissionError):
 				console.execute_system_console("print('x')", uuid.uuid4().hex, "Test")
 			enqueue.assert_not_called()
+		with self.assertRaises(frappe.PermissionError):
+			console.run_source("print('denied')", "Python")
 
 
 class TestConsoleTransactions(unittest.TestCase):
@@ -154,7 +156,8 @@ class TestConsoleTransactions(unittest.TestCase):
 			{"doctype": "ToDo", "description": "MCP test baseline " + uuid.uuid4().hex}
 		).insert()
 		self.baseline = self.sentinel.description
-		frappe.db.commit()
+		# Transaction regression test needs a committed baseline or cleanup; touches only its own test records.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 		self.execution_id = None
 		self.source = None
 
@@ -166,7 +169,8 @@ class TestConsoleTransactions(unittest.TestCase):
 		if self.source:
 			frappe.db.delete("Console Log", {"script": self.source})
 		frappe.db.delete("ToDo", {"name": self.sentinel.name})
-		frappe.db.commit()
+		# Transaction regression test needs a committed baseline or cleanup; touches only its own test records.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	def queue(self, commit=False, fail=False):
 		self.source = (
@@ -181,7 +185,8 @@ class TestConsoleTransactions(unittest.TestCase):
 				self.source, uuid.uuid4().hex, "Transaction integration test", commit=commit
 			)
 		self.execution_id = queued["execution_id"]
-		frappe.db.commit()
+		# Transaction regression test needs a committed baseline or cleanup; touches only its own test records.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	def test_no_commit_rolls_back_changes_but_retains_output(self):
 		self.queue()

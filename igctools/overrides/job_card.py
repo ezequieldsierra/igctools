@@ -14,7 +14,7 @@ class JobCard(_JobCard):
 		tc = float(self.total_completed_qty or 0)
 
 		if fq < 0 or tc < 0:
-			frappe.throw("Las cantidades no pueden ser negativas.")
+			frappe.throw(frappe._("Las cantidades no pueden ser negativas."))
 
 		# Si quieres permitir solo >= (no menor al plan), descomenta:
 		# if tc < fq:

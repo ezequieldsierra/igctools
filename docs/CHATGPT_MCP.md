@@ -120,3 +120,40 @@ HTTP, protocols 2025-03-26 and 2025-06-18. GET streaming is explicitly unsupport
 
 References: [MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
 and [ChatGPT OAuth](https://developers.openai.com/plugins/build/auth).
+
+
+## Continuous integration and reviewed privileged operations
+
+CI creates an isolated Frappe 15.120.1 site on Ubuntu 22.04 and runs the app tests,
+the 39 MCP integration/transaction tests and three SVG/PDF/DXF regression tests.
+Server Scripts are enabled only on that disposable CI site so console tests execute.
+The developer and production sites are not configured by this workflow.
+
+CairoSVG 2.9.1 and lxml 6.1.3 replace the vulnerable pinned export dependencies.
+The export tests check physical dimensions, curves, stroke colors, DXF units and
+SVG deduplication. The Python and JavaScript formatting checks cover maintained
+source; the vendored, compiled face-api bundle is excluded from source formatting.
+Dependency audit and Semgrep remain enabled.
+
+Semgrep review dispositions are limited to specific call sites and rules:
+
+- Guest HTTP routing is needed for the OAuth challenge, login redirect and token
+  exchange. Every MCP operation requires a resource-bound bearer token and the
+  configured user. PKCE, replay, expiry/resource and Guest-denial tests cover this.
+- System Console intentionally executes restricted Python. It checks the configured
+  user, System Manager and native console permission before queueing, in the worker,
+  and immediately before execution. Native SafeExec restrictions remain active;
+  script-level commit/rollback is blocked. The queue actor is an immutable audit field.
+- Worker commits preserve status and enforce explicit Commit semantics; transaction
+  tests cover rollback, failure, revocation, deduplication and retained output.
+- Existing file export commits preserve the established persisted-download contract;
+  the project rebuild checkpoints completed batches. Test commits affect test records.
+- Certificate reads use the installed CA store and a fixed bundled certificate path.
+  No API caller controls these paths. The temporary bundle is flushed and closed before use.
+- Consent rendering uses a fixed application template with escaped context.
+- The existing Job Card subclass uses the v15 override hook; extend_doctype_class
+  is available only in v16+, outside this app's supported framework range.
+
+These dispositions do not disable rules globally or change their severity. Each
+remaining intentional operation has an adjacent explanation and a rule-specific
+annotation; new occurrences remain subject to scanning.

@@ -163,7 +163,7 @@ def _svg_to_solid_mm(svg_str, height_mm):
 	"""
 	paths, min_y, max_y = _parse_svg_to_paths(svg_str)
 	if not paths:
-		frappe.throw("No se pudieron extraer paths del SVG para nesting.")
+		frappe.throw(frappe._("No se pudieron extraer paths del SVG para nesting."))
 
 	bbox_h_units = max_y - min_y
 	if bbox_h_units <= 0:
@@ -186,7 +186,7 @@ def _svg_to_solid_mm(svg_str, height_mm):
 			lines.append(LineString(pts_mm))
 
 	if not lines:
-		frappe.throw("No se pudieron construir líneas del SVG.")
+		frappe.throw(frappe._("No se pudieron construir líneas del SVG."))
 
 	# Normalizar X para que arranque en 0 (no afecta al stepY)
 	shift_x = -min_x if min_x not in (float("inf"), float("-inf")) else 0.0
@@ -255,7 +255,12 @@ def _min_step_y_tetebeche_mm(svg_str, height_mm, gap_y_mm):
 
 
 @frappe.whitelist()
-def compute_tetebeche_pitch(svg, height_mm, gap_y_mm=0.0, rotation_deg=0):
+def compute_tetebeche_pitch(
+	svg: str,
+	height_mm: float | str | None,
+	gap_y_mm: float | str | None = 0.0,
+	rotation_deg: float | str | None = 0,
+):
 	"""
 	Devuelve el pitch vertical (stepY) tête-bêche en mm, usando Shapely.
 	Firmas compatibes con el client script actual.
@@ -264,10 +269,10 @@ def compute_tetebeche_pitch(svg, height_mm, gap_y_mm=0.0, rotation_deg=0):
 		height_mm = float(height_mm or 0.0)
 		gap_y_mm = float(gap_y_mm or 0.0)
 	except Exception:
-		frappe.throw("height_mm y gap_y_mm deben ser numéricos.")
+		frappe.throw(frappe._("height_mm y gap_y_mm deben ser numéricos."))
 
 	if height_mm <= 0:
-		frappe.throw("height_mm debe ser > 0")
+		frappe.throw(frappe._("height_mm debe ser > 0"))
 
 	step_y = _min_step_y_tetebeche_mm(svg, height_mm, gap_y_mm)
 	return {"step_y_mm": step_y}

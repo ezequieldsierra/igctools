@@ -34,7 +34,7 @@ def get_format(name, write=False):
 	doc = frappe.get_doc("Print Format", name, for_update=write)
 	doc.check_permission("write" if write else "read")
 	if doc.print_format_for != "DocType" or not doc.doc_type:
-		frappe.throw("Only document print formats are supported.")
+		frappe.throw(frappe._("Only document print formats are supported."))
 	require_doctype(doc.doc_type)
 	return doc
 
@@ -162,11 +162,11 @@ def save_print_format(name, doc_type, html, css, reason, expected_revision="", s
 	meta = require_doctype(doc_type)
 	settings = json.loads(settings_json)
 	if not isinstance(settings, dict) or set(settings) - STYLE_FIELDS:
-		frappe.throw("Unknown print format style settings.")
+		frappe.throw(frappe._("Unknown print format style settings."))
 	if any(type(value) not in (str, int, float, bool) for value in settings.values()):
-		frappe.throw("Style settings must contain scalar values.")
+		frappe.throw(frappe._("Style settings must contain scalar values."))
 	if len(html.encode()) + len(css.encode()) > 1000000:
-		frappe.throw("Print format source exceeds one megabyte.")
+		frappe.throw(frappe._("Print format source exceeds one megabyte."))
 	before = None
 	if frappe.db.exists("Print Format", name):
 		doc = get_format(name, write=True)
@@ -180,12 +180,16 @@ def save_print_format(name, doc_type, html, css, reason, expected_revision="", s
 			or doc.print_format_builder_beta
 		):
 			frappe.throw(
-				"Create a separate custom Jinja format; this format has a different type or builder."
+				frappe._(
+					"Create a separate custom Jinja format; this format has a different type or builder."
+				)
 			)
 		before = doc.as_dict()
 	else:
 		if expected_revision:
-			frappe.throw("The expected print format no longer exists.", frappe.TimestampMismatchError)
+			frappe.throw(
+				frappe._("The expected print format no longer exists."), frappe.TimestampMismatchError
+			)
 		doc = frappe.get_doc(
 			{
 				"doctype": "Print Format",
@@ -207,7 +211,7 @@ def save_print_format(name, doc_type, html, css, reason, expected_revision="", s
 		doc.save()
 	verified = get_format(name)
 	if verified.html != html or (verified.css or "") != css:
-		frappe.throw("Saved print format does not match the requested source.")
+		frappe.throw(frappe._("Saved print format does not match the requested source."))
 	audit_id = archive("Print Format", name, before, verified.as_dict(), reason)
 	return {
 		**format_metadata(verified),
@@ -221,13 +225,14 @@ def set_default_print_format(name, expected_revision, expected_default_revision,
 	doc = get_format(name, write=True)
 	scripts.check_revision(doc, expected_revision)
 	if doc.disabled:
-		frappe.throw("A disabled print format cannot be the default.")
+		frappe.throw(frappe._("A disabled print format cannot be the default."))
 	# Serialize connector changes on the parent and check both the format and current default.
 	frappe.get_doc("DocType", doc.doc_type, for_update=True)
 	before = default_state(doc.doc_type)
 	if scripts.digest(scripts.serialize(before)) != expected_default_revision:
 		frappe.throw(
-			"The default print format changed; read the context again.", frappe.TimestampMismatchError
+			frappe._("The default print format changed; read the context again."),
+			frappe.TimestampMismatchError,
 		)
 	from frappe.printing.doctype.print_format.print_format import make_default
 
@@ -235,7 +240,7 @@ def set_default_print_format(name, expected_revision, expected_default_revision,
 	frappe.clear_cache(doctype=doc.doc_type)
 	verified = default_metadata(doc.doc_type)
 	if verified["default_print_format"] != name:
-		frappe.throw("The default print format could not be verified.")
+		frappe.throw(frappe._("The default print format could not be verified."))
 	audit_id = archive("Print Default", doc.doc_type, before, default_state(doc.doc_type), reason)
 	return {"doc_type": doc.doc_type, **verified, "audit_id": audit_id}
 
@@ -271,12 +276,12 @@ def restore_print_format(name, expected_revision, audit_id, reason):
 		or audit.script_name != name
 		or scripts.digest(audit.before_snapshot) != audit.before_hash
 	):
-		frappe.throw("The backup is invalid or belongs to another print format.")
+		frappe.throw(frappe._("The backup is invalid or belongs to another print format."))
 	before = json.loads(audit.before_snapshot)
 	if not before:
-		frappe.throw("This backup records creation; there is no earlier format to restore.")
+		frappe.throw(frappe._("This backup records creation; there is no earlier format to restore."))
 	if before.get("doc_type") != doc.doc_type:
-		frappe.throw("The backup belongs to a different document type.")
+		frappe.throw(frappe._("The backup belongs to a different document type."))
 	result = save_print_format(
 		name,
 		doc.doc_type,
@@ -296,7 +301,7 @@ def restore_print_format(name, expected_revision, audit_id, reason):
 def preview_print_format(name, document_name, part="html", offset=0, length=30000):
 	doc = get_format(name)
 	if doc.disabled:
-		frappe.throw("The print format is disabled.")
+		frappe.throw(frappe._("The print format is disabled."))
 	document = frappe.get_doc(doc.doc_type, document_name)
 	document.check_permission("read")
 	document.check_permission("print")

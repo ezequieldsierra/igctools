@@ -251,10 +251,12 @@ def _generate_svg_from_printcard_pdf(pc_doc) -> str:
 	pdf_bytes = _pdf_file_bytes_from_printcard(pc_doc)
 	if not pdf_bytes:
 		return ""
-	if MODE == "RASTER_WRAPPER":
-		return _pdf_first_page_to_raster_wrapper_svg(pdf_bytes)
-	if MODE == "VECTOR_SIMPLIFIED":
-		return _pdf_first_page_to_svg_vector(pdf_bytes)
+	renderer = {
+		"RASTER_WRAPPER": _pdf_first_page_to_raster_wrapper_svg,
+		"VECTOR_SIMPLIFIED": _pdf_first_page_to_svg_vector,
+	}.get(MODE)
+	if renderer:
+		return renderer(pdf_bytes)
 	try:
 		import fitz
 
@@ -394,7 +396,8 @@ def _rebuild_job(batch_size: int = 200, force: bool = False, only_empty: bool = 
 				)
 			done += 1
 
-		frappe.db.commit()
+		# Long-running rebuild checkpoints each completed batch, preserving work across later batch failures.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 		start += batch_size
 
 	return {"ok": True, "total": total, "processed": done, "force": force, "only_empty": only_empty}
@@ -403,7 +406,7 @@ def _rebuild_job(batch_size: int = 200, force: bool = False, only_empty: bool = 
 @frappe.whitelist()
 def rebuild_project_svgs(batch_size: int = 200, force: int = 0, only_empty: int = 1, enqueue: int = 1):
 	if not frappe.has_permission(doctype="Project", ptype="write"):
-		frappe.throw("Permisos insuficientes")
+		frappe.throw(frappe._("Permisos insuficientes"))
 
 	force_b = bool(int(force))
 	only_empty_b = bool(int(only_empty))

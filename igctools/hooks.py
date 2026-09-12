@@ -18,7 +18,8 @@ app_include_js = [
 	"/assets/igctools/js/igc_broadcast_global.js",
 ]
 
-override_doctype_class = {
+# Frappe 15 has no extend_doctype_class; the existing Job Card subclass requires this hook.
+override_doctype_class = {  # nosemgrep: override-doctype-class
 	"Job Card": "igctools.overrides.job_card.JobCard",
 }
 

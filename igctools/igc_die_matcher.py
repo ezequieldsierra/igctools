@@ -391,7 +391,12 @@ def compare_die_features(cliente, troq, tolerance_mm):
 
 
 @frappe.whitelist()
-def find_similar_dies_from_svg(svg_text, tolerance_mm=3.0, max_results=30, tipo_producto=None):
+def find_similar_dies_from_svg(
+	svg_text: str,
+	tolerance_mm: float | str | None = 3.0,
+	max_results: int | str | None = 30,
+	tipo_producto: str | None = None,
+):
 	if not svg_text:
 		return []
 

@@ -91,7 +91,7 @@ def _unique_filename(basename, width_mm, height_mm, ext):
 
 
 @frappe.whitelist()
-def generar_archivo_svg_troquel(svg, nombre=None, formato="PDF"):
+def generar_archivo_svg_troquel(svg: str, nombre: str | None = None, formato: str = "PDF"):
 	"""
 	Wrapper del export de PackDesign para PDF / DXF.
 
@@ -101,11 +101,11 @@ def generar_archivo_svg_troquel(svg, nombre=None, formato="PDF"):
 	"""
 	svg = svg or ""
 	if "<svg" not in svg:
-		frappe.throw("SVG inválido (no se encontró etiqueta <svg>).")
+		frappe.throw(frappe._("SVG inválido (no se encontró etiqueta <svg>)."))
 
 	fmt = (formato or "PDF").strip().upper()
 	if fmt not in ("PDF", "DXF"):
-		frappe.throw(f"Formato no soportado: {fmt}")
+		frappe.throw(frappe._("Formato no soportado: {0}").format(fmt))
 
 	width_mm, height_mm = _parse_svg_size(svg)
 	basename = (nombre or "Troquel").strip() or "Troquel"

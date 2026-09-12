@@ -42,11 +42,11 @@ def execute_system_console(script, request_id, reason, language="Python", commit
 	"""Queue once per caller-provided request id. Reuse the same id when retrying."""
 	require_console()
 	if language not in ("Python", "SQL") or type(commit) is not bool:
-		frappe.throw("Use Python or SQL and a boolean Commit value.")
+		frappe.throw(frappe._("Use Python or SQL and a boolean Commit value."))
 	if not script.strip() or len(script.encode()) > 1000000:
-		frappe.throw("Script must be nonempty and at most one megabyte.")
+		frappe.throw(frappe._("Script must be nonempty and at most one megabyte."))
 	if language == "SQL" and commit:
-		frappe.throw("SQL console uses Frappe's read-only SQL interface; Commit must be false.")
+		frappe.throw(frappe._("SQL console uses Frappe's read-only SQL interface; Commit must be false."))
 	request_hash = scripts.digest(
 		scripts.serialize(
 			{
@@ -61,7 +61,7 @@ def execute_system_console(script, request_id, reason, language="Python", commit
 	if frappe.db.exists(RUN_TYPE, name):
 		doc = frappe.get_doc(RUN_TYPE, name)
 		if doc.actor != frappe.session.user or doc.request_hash != request_hash:
-			frappe.throw("The request id was already used for a different execution.")
+			frappe.throw(frappe._("The request id was already used for a different execution."))
 	else:
 		doc = frappe.get_doc(
 			{
@@ -86,7 +86,7 @@ def execute_system_console(script, request_id, reason, language="Python", commit
 			frappe.db.rollback(save_point="igctools_console_insert")
 			doc = frappe.get_doc(RUN_TYPE, name)
 			if doc.actor != frappe.session.user or doc.request_hash != request_hash:
-				frappe.throw("The request id was already used for a different execution.")
+				frappe.throw(frappe._("The request id was already used for a different execution."))
 	if doc.status == "Queued":
 		frappe.enqueue(
 			"igctools.mcp_console.run_execution",
@@ -120,6 +120,7 @@ class OutputLog(list):
 def run_source(script, language):
 	from frappe.utils.safe_exec import FrappePrintCollector, read_sql, safe_exec
 
+	require_console()
 	log = OutputLog()
 
 	class ConsolePrintCollector(FrappePrintCollector):
@@ -133,7 +134,8 @@ def run_source(script, language):
 	error_type, error = "", ""
 	try:
 		if language == "Python":
-			safe_exec(
+			# Intentional System Console: require_console() checked; native sandbox disallows script commit/rollback.
+			safe_exec(  # nosemgrep: frappe-codeinjection-eval
 				script,
 				_globals={"_print_": ConsolePrintCollector},
 				restrict_commit_rollback=True,
@@ -160,7 +162,8 @@ def run_execution(execution_id):
 		frappe.db.rollback()
 		return
 	actor = doc.actor
-	frappe.set_user(actor)
+	# Actor is from the immutable queued audit; require_console() immediately rechecks configured user and roles.
+	frappe.set_user(actor)  # nosemgrep: frappe-setuser
 	try:
 		require_console()
 	except Exception as exc:
@@ -169,12 +172,14 @@ def run_execution(execution_id):
 		doc.error = "The configured user no longer has permission to run System Console."
 		doc.finished_at = frappe.utils.now_datetime()
 		save_run(doc)
-		frappe.db.commit()
+		# Worker transaction boundary preserves audit status; script effects commit only when explicitly requested.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
 		return
 	doc.status = "Running"
 	doc.started_at = frappe.utils.now_datetime()
 	save_run(doc)
-	frappe.db.commit()
+	# Worker transaction boundary preserves audit status; script effects commit only when explicitly requested.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	started = time.monotonic()
 	result = run_source(doc.script, doc.language)
 	# Only the connector closes the script transaction; scripts cannot call commit/rollback directly.
@@ -194,7 +199,8 @@ def run_execution(execution_id):
 	).insert()
 	# Successful requested changes and their completed audit are committed together.
 	# For rollback runs only the execution audit and native Console Log are persisted.
-	frappe.db.commit()
+	# Worker transaction boundary preserves audit status; script effects commit only when explicitly requested.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 
 def read_console_output(execution_id, offset=0, length=20000, part="output"):

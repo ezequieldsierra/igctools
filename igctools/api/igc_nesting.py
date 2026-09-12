@@ -212,7 +212,14 @@ def _calculate_optimal_tetebeche_step(paths_normal, paths_inverted, gap_y_mm):
 
 
 @frappe.whitelist()
-def compute_tetebeche_pitch(svg, height_mm, width_mm, gap_y_mm=0.0, gap_x_mm=0.0, rotation_deg=0):
+def compute_tetebeche_pitch(
+	svg: str,
+	height_mm: float | str | None,
+	width_mm: float | str | None,
+	gap_y_mm: float | str | None = 0.0,
+	gap_x_mm: float | str | None = 0.0,
+	rotation_deg: float | str | None = 0,
+):
 	"""
 	API: calcula el paso Y tête-bêche mínimo en mm (usando Shapely/GEOS).
 
@@ -232,7 +239,7 @@ def compute_tetebeche_pitch(svg, height_mm, width_mm, gap_y_mm=0.0, gap_x_mm=0.0
 		paths, min_y, max_y = _parse_svg_to_paths(svg)
 
 		if not paths:
-			frappe.throw("No se pudieron extraer contornos válidos del SVG.")
+			frappe.throw(frappe._("No se pudieron extraer contornos válidos del SVG."))
 
 		up_paths = paths
 		down_paths = _rotate_180(paths, min_y, max_y)

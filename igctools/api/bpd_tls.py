@@ -47,10 +47,12 @@ def bpd_ca_bundle():
 	temp_path = None
 
 	try:
-		with open(certifi.where(), "rb") as base_file:
+		# Trusted installed CA bundle path, never supplied by an API caller.
+		with open(certifi.where(), "rb") as base_file:  # nosemgrep: frappe-security-file-traversal
 			base_bundle = base_file.read()
 
-		with open(_CERTIFICATE_FILE, "rb") as intermediate_file:
+		# Fixed certificate bundled with this app; no user-controlled path components.
+		with open(_CERTIFICATE_FILE, "rb") as intermediate_file:  # nosemgrep: frappe-security-file-traversal
 			intermediate = intermediate_file.read()
 
 		with tempfile.NamedTemporaryFile(
@@ -69,6 +71,7 @@ def bpd_ca_bundle():
 			if not intermediate.endswith(b"\n"):
 				temp_file.write(b"\n")
 
+			temp_file.flush()
 			temp_path = temp_file.name
 
 		yield temp_path

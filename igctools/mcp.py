@@ -225,6 +225,10 @@ def validate_arguments(definition, args):
 			raise ValueError("Invalid number: " + key)
 
 
+# OAuth challenge requires Guest routing; authenticate() rejects every unauthenticated operation.
+
+
+# nosemgrep: guest-whitelisted-method
 @frappe.whitelist(allow_guest=True, xss_safe=True, methods=["POST", "GET", "DELETE"])
 def handle(**kwargs):
 	# allow_guest is ONLY to return an OAuth challenge; every operation is gated below.
