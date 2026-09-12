@@ -1,0 +1,71 @@
+{
+ "doctype": "DocType",
+ "name": "IGC MCP Settings",
+ "module": "IGCTools",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "allowed_user",
+  "site_url",
+  "server_url",
+  "oauth_client",
+  "oauth_client_id",
+  "connection_help"
+ ],
+ "fields": [
+  {
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "default": "0",
+   "description": "Enable the ChatGPT connection after configuring the authorized user."
+  },
+  {
+   "fieldname": "allowed_user",
+   "fieldtype": "Link",
+   "label": "Allowed User",
+   "options": "User",
+   "description": "Only this enabled System Manager can use the connector."
+  },
+  {
+   "fieldname": "site_url",
+   "fieldtype": "Data",
+   "label": "Site Url",
+   "description": "Public HTTPS address of this site."
+  },
+  {
+   "fieldname": "server_url",
+   "fieldtype": "Data",
+   "label": "Server Url",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oauth_client",
+   "fieldtype": "Link",
+   "label": "Oauth Client",
+   "options": "OAuth Client",
+   "read_only": 1
+  },
+  {
+   "fieldname": "oauth_client_id",
+   "fieldtype": "Data",
+   "label": "Oauth Client Id",
+   "read_only": 1
+  },
+  {
+   "fieldname": "connection_help",
+   "fieldtype": "HTML",
+   "label": "Connection Help",
+   "options": "<p>In ChatGPT: <b>Plugins \u2192 + \u2192 New Plugin</b>. Use Server URL and OAuth. In Advanced OAuth settings use the OAuth Client ID above; this is a public client and has no client secret.</p>"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ],
+ "issingle": 1
+}

@@ -1,0 +1,75 @@
+{
+ "doctype": "DocType",
+ "name": "IGC MCP Grant",
+ "module": "IGCTools",
+ "engine": "InnoDB",
+ "field_order": [
+  "kind",
+  "oauth_client",
+  "actor",
+  "resource",
+  "expires_on",
+  "refresh_hash",
+  "refresh_expires_on",
+  "revoked"
+ ],
+ "fields": [
+  {
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "label": "Kind",
+   "options": "Code\nToken",
+   "reqd": 1
+  },
+  {
+   "fieldname": "oauth_client",
+   "fieldtype": "Link",
+   "label": "Oauth Client",
+   "options": "OAuth Client",
+   "reqd": 1
+  },
+  {
+   "fieldname": "actor",
+   "fieldtype": "Link",
+   "label": "Actor",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "resource",
+   "fieldtype": "Small Text",
+   "label": "Resource",
+   "reqd": 1
+  },
+  {
+   "fieldname": "expires_on",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "reqd": 1
+  },
+  {
+   "fieldname": "refresh_hash",
+   "fieldtype": "Data",
+   "label": "Refresh Hash",
+   "search_index": 1
+  },
+  {
+   "fieldname": "refresh_expires_on",
+   "fieldtype": "Datetime",
+   "label": "Refresh Expires On"
+  },
+  {
+   "fieldname": "revoked",
+   "fieldtype": "Check",
+   "label": "Revoked",
+   "default": "0"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1
+  }
+ ],
+ "autoname": "prompt"
+}
