@@ -10,11 +10,10 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import frappe
-from oauthlib.oauth2 import OAuth2Error, Server
-from werkzeug.exceptions import HTTPException
-
 from frappe.oauth import OAuthWebRequestValidator
 from frappe.utils import add_to_date, get_datetime, now_datetime
+from oauthlib.oauth2 import OAuth2Error, Server
+from werkzeug.exceptions import HTTPException
 
 
 def get_settings():
@@ -25,10 +24,13 @@ def get_settings():
 
 def endpoints(settings):
 	base = settings.site_url.rstrip("/")
-	return {"issuer": base + "/igctools-mcp", "resource": base + "/api/method/igctools.mcp.handle",
+	return {
+		"issuer": base + "/igctools-mcp",
+		"resource": base + "/api/method/igctools.mcp.handle",
 		"metadata": base + "/.well-known/oauth-protected-resource/api/method/igctools.mcp.handle",
 		"authorization_endpoint": base + "/api/method/igctools.mcp_auth.authorize",
-		"token_endpoint": base + "/api/method/igctools.mcp_auth.token"}
+		"token_endpoint": base + "/api/method/igctools.mcp_auth.token",
+	}
 
 
 def check_origin(settings):
@@ -51,14 +53,24 @@ def before_request():
 	if frappe.request.method != "GET":
 		raise HTTPException(response=response(status=405, headers={"Allow": "GET"}))
 	if path == resource_path:
-		body = {"resource": urls["resource"], "authorization_servers": [urls["issuer"]],
-			"scopes_supported": ["all"], "bearer_methods_supported": ["header"]}
+		body = {
+			"resource": urls["resource"],
+			"authorization_servers": [urls["issuer"]],
+			"scopes_supported": ["all"],
+			"bearer_methods_supported": ["header"],
+		}
 	else:
-		body = {"issuer": urls["issuer"], "authorization_endpoint": urls["authorization_endpoint"],
-			"token_endpoint": urls["token_endpoint"], "response_types_supported": ["code"],
+		body = {
+			"issuer": urls["issuer"],
+			"authorization_endpoint": urls["authorization_endpoint"],
+			"token_endpoint": urls["token_endpoint"],
+			"response_types_supported": ["code"],
 			"grant_types_supported": ["authorization_code", "refresh_token"],
-			"token_endpoint_auth_methods_supported": ["none"], "code_challenge_methods_supported": ["S256"],
-			"scopes_supported": ["all"], "authorization_response_iss_parameter_supported": True}
+			"token_endpoint_auth_methods_supported": ["none"],
+			"code_challenge_methods_supported": ["S256"],
+			"scopes_supported": ["all"],
+			"authorization_response_iss_parameter_supported": True,
+		}
 	raise HTTPException(response=response(body))
 
 
@@ -97,11 +109,20 @@ def authenticate(settings):
 		challenge = 'Bearer resource_metadata="' + endpoints(settings)["metadata"] + '", scope="all"'
 		return response({"error": "Authentication required"}, 401, {"WWW-Authenticate": challenge})
 	# Native Frappe authentication validates signature/lookup, expiry and revocation first.
-	row = frappe.db.get_value("OAuth Bearer Token", header[1],
-		["user", "client", "status", "expiration_time", "scopes"], as_dict=True)
+	row = frappe.db.get_value(
+		"OAuth Bearer Token",
+		header[1],
+		["user", "client", "status", "expiration_time", "scopes"],
+		as_dict=True,
+	)
 	if not row or row.status != "Active" or get_datetime(row.expiration_time) <= now_datetime():
 		return response({"error": "Token expired or revoked"}, 401)
-	if row.user != frappe.session.user or row.user != grant.actor or row.client != settings.oauth_client or "all" not in row.scopes.split():
+	if (
+		row.user != frappe.session.user
+		or row.user != grant.actor
+		or row.client != settings.oauth_client
+		or "all" not in row.scopes.split()
+	):
 		return response({"error": "Token identity or scope mismatch"}, 403)
 	try:
 		require_user()
@@ -148,20 +169,38 @@ class MCPValidator(OAuthWebRequestValidator):
 		from igctools.mcp_scripts import require_user
 
 		settings = require_user()
-		doc = frappe.get_doc({"doctype": "OAuth Authorization Code", "authorization_code": code["code"],
-			"client": client_id, "user": frappe.session.user, "scopes": "all",
-			"redirect_uri_bound_to_authorization_code": request.redirect_uri,
-			"code_challenge": request.code_challenge, "code_challenge_method": "s256"})
+		doc = frappe.get_doc(
+			{
+				"doctype": "OAuth Authorization Code",
+				"authorization_code": code["code"],
+				"client": client_id,
+				"user": frappe.session.user,
+				"scopes": "all",
+				"redirect_uri_bound_to_authorization_code": request.redirect_uri,
+				"code_challenge": request.code_challenge,
+				"code_challenge_method": "s256",
+			}
+		)
 		doc.insert(ignore_permissions=True)
-		frappe.get_doc({"doctype": "IGC MCP Grant", "name": grant_name("Code", code["code"]),
-			"kind": "Code", "oauth_client": client_id, "actor": frappe.session.user,
-			"resource": endpoints(settings)["resource"], "expires_on": add_to_date(now_datetime(), minutes=5)}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "IGC MCP Grant",
+				"name": grant_name("Code", code["code"]),
+				"kind": "Code",
+				"oauth_client": client_id,
+				"actor": frappe.session.user,
+				"resource": endpoints(settings)["resource"],
+				"expires_on": add_to_date(now_datetime(), minutes=5),
+			}
+		).insert(ignore_permissions=True)
 
 	def validate_code(self, client_id, code, client, request, *args, **kwargs):
 		grant = load_grant("Code", code)
 		if not valid_grant(grant, get_settings()) or grant.oauth_client != client_id:
 			return False
-		row = frappe.db.get_value("OAuth Authorization Code", code, ["validity", "user", "scopes"], as_dict=True)
+		row = frappe.db.get_value(
+			"OAuth Authorization Code", code, ["validity", "user", "scopes"], as_dict=True
+		)
 		if not row or row.validity != "Valid" or row.user != grant.actor:
 			return False
 		request.user, request.scopes = row.user, row.scopes.split()
@@ -174,7 +213,9 @@ class MCPValidator(OAuthWebRequestValidator):
 		return "S256"
 
 	def confirm_redirect_uri(self, client_id, code, redirect_uri, client, *args, **kwargs):
-		return redirect_uri == frappe.db.get_value("OAuth Authorization Code", code, "redirect_uri_bound_to_authorization_code")
+		return redirect_uri == frappe.db.get_value(
+			"OAuth Authorization Code", code, "redirect_uri_bound_to_authorization_code"
+		)
 
 	def invalidate_authorization_code(self, client_id, code, request, *args, **kwargs):
 		frappe.db.set_value("IGC MCP Grant", grant_name("Code", code), "revoked", 1)
@@ -185,15 +226,31 @@ class MCPValidator(OAuthWebRequestValidator):
 
 		settings = require_user(request.user)
 		client_id = request.client.name
-		row = frappe.get_doc({"doctype": "OAuth Bearer Token", "client": client_id, "user": request.user,
-			"scopes": "all", "access_token": token["access_token"], "refresh_token": token.get("refresh_token"),
-			"expires_in": token["expires_in"]})
+		row = frappe.get_doc(
+			{
+				"doctype": "OAuth Bearer Token",
+				"client": client_id,
+				"user": request.user,
+				"scopes": "all",
+				"access_token": token["access_token"],
+				"refresh_token": token.get("refresh_token"),
+				"expires_in": token["expires_in"],
+			}
+		)
 		row.insert(ignore_permissions=True)
-		frappe.get_doc({"doctype": "IGC MCP Grant", "name": grant_name("Token", token["access_token"]),
-			"kind": "Token", "oauth_client": client_id, "actor": request.user,
-			"resource": endpoints(settings)["resource"], "expires_on": row.expiration_time,
-			"refresh_hash": hashed(token["refresh_token"]) if token.get("refresh_token") else None,
-			"refresh_expires_on": add_to_date(now_datetime(), days=30)}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "IGC MCP Grant",
+				"name": grant_name("Token", token["access_token"]),
+				"kind": "Token",
+				"oauth_client": client_id,
+				"actor": request.user,
+				"resource": endpoints(settings)["resource"],
+				"expires_on": row.expiration_time,
+				"refresh_hash": hashed(token["refresh_token"]) if token.get("refresh_token") else None,
+				"refresh_expires_on": add_to_date(now_datetime(), days=30),
+			}
+		).insert(ignore_permissions=True)
 		if request.grant_type == "refresh_token":
 			self.invalidate_refresh_token(request)
 		token["resource"] = endpoints(settings)["resource"]
@@ -202,11 +259,18 @@ class MCPValidator(OAuthWebRequestValidator):
 		return True
 
 	def validate_refresh_token(self, refresh_token, client, request, *args, **kwargs):
-		name = frappe.db.get_value("IGC MCP Grant", {"refresh_hash": hashed(refresh_token), "revoked": 0}, "name")
+		name = frappe.db.get_value(
+			"IGC MCP Grant", {"refresh_hash": hashed(refresh_token), "revoked": 0}, "name"
+		)
 		grant = frappe.get_doc("IGC MCP Grant", name, for_update=True) if name else None
 		if not valid_grant(grant, get_settings(), refresh=True) or grant.oauth_client != client.name:
 			return False
-		row = frappe.db.get_value("OAuth Bearer Token", {"refresh_token": refresh_token, "status": "Active"}, ["user", "client"], as_dict=True)
+		row = frappe.db.get_value(
+			"OAuth Bearer Token",
+			{"refresh_token": refresh_token, "status": "Active"},
+			["user", "client"],
+			as_dict=True,
+		)
 		if not row or row.user != grant.actor or row.client != client.name:
 			return False
 		request.user, request.scopes = row.user, ["all"]
@@ -235,7 +299,10 @@ def validate_request(settings, authorization=False):
 	if not settings.enabled or not check_origin(settings):
 		raise frappe.PermissionError("MCP authorization is unavailable.")
 	params = frappe.form_dict
-	if params.get("resource") != endpoints(settings)["resource"] or params.get("client_id") != settings.oauth_client:
+	if (
+		params.get("resource") != endpoints(settings)["resource"]
+		or params.get("client_id") != settings.oauth_client
+	):
 		raise frappe.PermissionError("OAuth client or resource does not match this connector.")
 	if authorization:
 		if params.get("response_type") != "code" or params.get("code_challenge_method") != "S256":
@@ -251,28 +318,52 @@ def authorize(**kwargs):
 	settings = get_settings()
 	validate_request(settings, authorization=True)
 	server = get_server()
-	scopes, credentials = server.validate_authorization_request(frappe.request.url, "GET", headers=frappe.request.headers)
+	scopes, credentials = server.validate_authorization_request(
+		frappe.request.url, "GET", headers=frappe.request.headers
+	)
 	if frappe.session.user == "Guest":
-		frappe.local.response.update({"type": "redirect", "location": "/login?" + urlencode({"redirect-to": frappe.request.url})})
+		frappe.local.response.update(
+			{"type": "redirect", "location": "/login?" + urlencode({"redirect-to": frappe.request.url})}
+		)
 		return
 	from igctools.mcp_scripts import require_user
 
 	require_user()
-	params = {key: value for key, value in kwargs.items() if key in (
-		"client_id", "redirect_uri", "response_type", "scope", "state", "code_challenge", "code_challenge_method", "resource")}
+	params = {
+		key: value
+		for key, value in kwargs.items()
+		if key
+		in (
+			"client_id",
+			"redirect_uri",
+			"response_type",
+			"scope",
+			"state",
+			"code_challenge",
+			"code_challenge_method",
+			"resource",
+		)
+	}
 	success = "/api/method/igctools.mcp_auth.approve?" + urlencode(params)
-	failure = append_params(credentials["redirect_uri"], {"error": "access_denied", "state": params["state"], "iss": endpoints(settings)["issuer"]})
+	failure = append_params(
+		credentials["redirect_uri"],
+		{"error": "access_denied", "state": params["state"], "iss": endpoints(settings)["issuer"]},
+	)
 	from frappe.sessions import get_csrf_token
 
-	html = frappe.render_template("templates/igctools_mcp_consent.html", {
-		"success_url": success, "failure_url": failure, "csrf_token": get_csrf_token()})
+	html = frappe.render_template(
+		"templates/igctools_mcp_consent.html",
+		{"success_url": success, "failure_url": failure, "csrf_token": get_csrf_token()},
+	)
 	frappe.respond_as_web_page("Connect IGCTools", html, primary_action=None)
 
 
 def append_params(url, values):
 	parts = urlsplit(url)
 	query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in values]
-	return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query + list(values.items())), parts.fragment))
+	return urlunsplit(
+		(parts.scheme, parts.netloc, parts.path, urlencode(query + list(values.items())), parts.fragment)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -282,9 +373,12 @@ def approve(**kwargs):
 	settings = require_user()
 	validate_request(settings, authorization=True)
 	server = get_server()
-	scopes, credentials = server.validate_authorization_request(frappe.request.url, "POST", headers=frappe.request.headers)
-	headers, body, status = server.create_authorization_response(frappe.request.url, "POST", headers=frappe.request.headers,
-		scopes=scopes, credentials=credentials)
+	scopes, credentials = server.validate_authorization_request(
+		frappe.request.url, "POST", headers=frappe.request.headers
+	)
+	headers, body, status = server.create_authorization_response(
+		frappe.request.url, "POST", headers=frappe.request.headers, scopes=scopes, credentials=credentials
+	)
 	location = append_params(headers["Location"], {"iss": endpoints(settings)["issuer"]})
 	frappe.local.response.update({"type": "redirect", "location": location})
 
@@ -301,8 +395,12 @@ def token(**kwargs):
 		return response({"error": "unsupported_grant_type"}, 400)
 	frappe.db.savepoint("igctools_mcp_oauth")
 	try:
-		headers, body, status = get_server().create_token_response(frappe.request.url, "POST",
-			body=frappe.request.get_data(as_text=True), headers=frappe.request.headers)
+		headers, body, status = get_server().create_token_response(
+			frappe.request.url,
+			"POST",
+			body=frappe.request.get_data(as_text=True),
+			headers=frappe.request.headers,
+		)
 		if status >= 400:
 			frappe.db.rollback(save_point="igctools_mcp_oauth")
 		return response(json.loads(body), status, headers)

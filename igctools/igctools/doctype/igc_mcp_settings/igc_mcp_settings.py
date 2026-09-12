@@ -19,16 +19,32 @@ class IGCMCPSettings(Document):
 		user = frappe.get_doc("User", self.allowed_user)
 		if not user.enabled or user.user_type != "System User":
 			frappe.throw("The authorized user must be an enabled System User.")
-		if user.name != "Administrator" and not {"System Manager", "Script Manager"}.issubset(set(frappe.get_roles(user.name))):
+		if user.name != "Administrator" and not {"System Manager", "Script Manager"}.issubset(
+			set(frappe.get_roles(user.name))
+		):
 			frappe.throw("The authorized user needs System Manager and Script Manager.")
 		if not self.oauth_client:
-			client = frappe.get_doc({"doctype": "OAuth Client", "app_name": "IGCTools ChatGPT",
-				"token_endpoint_auth_method": "None", "grant_type": "Authorization Code", "response_type": "Code",
-				"redirect_uris": CALLBACK, "default_redirect_uri": CALLBACK, "scopes": "all", "skip_authorization": 0})
+			client = frappe.get_doc(
+				{
+					"doctype": "OAuth Client",
+					"app_name": "IGCTools ChatGPT",
+					"token_endpoint_auth_method": "None",
+					"grant_type": "Authorization Code",
+					"response_type": "Code",
+					"redirect_uris": CALLBACK,
+					"default_redirect_uri": CALLBACK,
+					"scopes": "all",
+					"skip_authorization": 0,
+				}
+			)
 			client.insert()
 			self.oauth_client = client.name
 		client = frappe.get_doc("OAuth Client", self.oauth_client)
-		if client.get("token_endpoint_auth_method") != "None" or client.default_redirect_uri != CALLBACK or client.redirect_uris.strip() != CALLBACK:
+		if (
+			client.get("token_endpoint_auth_method") != "None"
+			or client.default_redirect_uri != CALLBACK
+			or client.redirect_uris.strip() != CALLBACK
+		):
 			frappe.throw("Use a dedicated public OAuth client with the ChatGPT callback URL.")
 		self.oauth_client_id = client.client_id
 		self.server_url = self.site_url + "/api/method/igctools.mcp.handle"

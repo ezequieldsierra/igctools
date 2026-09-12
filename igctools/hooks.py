@@ -6,20 +6,20 @@ app_email = "esierra@gmail.com"
 app_license = "mit"
 
 doc_events = {
-    "PrintCard": {
-        "before_save": "igctools.api.printcard_svg.before_save_printcard_set_svg",
-    },
-    "Project": {
-        "before_save": "igctools.api.printcard_svg.auto_svg_from_printcard",
-    },
+	"PrintCard": {
+		"before_save": "igctools.api.printcard_svg.before_save_printcard_set_svg",
+	},
+	"Project": {
+		"before_save": "igctools.api.printcard_svg.auto_svg_from_printcard",
+	},
 }
 
 app_include_js = [
-    "/assets/igctools/js/igc_broadcast_global.js",
+	"/assets/igctools/js/igc_broadcast_global.js",
 ]
 
 override_doctype_class = {
-    "Job Card": "igctools.overrides.job_card.JobCard",
+	"Job Card": "igctools.overrides.job_card.JobCard",
 }
 
 # ------------------

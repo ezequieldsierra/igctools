@@ -46,17 +46,26 @@ def get_script_doc(script_type, name, write=False):
 
 def metadata(doc):
 	return {
-		"script_type": doc.doctype, "name": doc.name,
+		"script_type": doc.doctype,
+		"name": doc.name,
 		"reference_doctype": doc.get("dt") or doc.get("reference_doctype"),
-		"enabled": bool(doc.get("enabled")) if doc.doctype == "Client Script" else not bool(doc.get("disabled")),
-		"modified": str(doc.modified), "revision": digest(snapshot(doc)),
+		"enabled": bool(doc.get("enabled"))
+		if doc.doctype == "Client Script"
+		else not bool(doc.get("disabled")),
+		"modified": str(doc.modified),
+		"revision": digest(snapshot(doc)),
 	}
 
 
 def connection_info():
 	require_user()
-	return {"site": frappe.local.site, "user": frappe.session.user, "frappe_version": frappe.__version__,
-		"supported_documents": list(SCRIPT_TYPES), "executes_scripts": False}
+	return {
+		"site": frappe.local.site,
+		"user": frappe.session.user,
+		"frappe_version": frappe.__version__,
+		"supported_documents": list(SCRIPT_TYPES),
+		"executes_scripts": False,
+	}
 
 
 def search_scripts(script_type, query="", offset=0, limit=30):
@@ -64,10 +73,14 @@ def search_scripts(script_type, query="", offset=0, limit=30):
 	if script_type not in SCRIPT_TYPES:
 		raise frappe.ValidationError("Unsupported script type.")
 	filters = [["name", "like", "%" + query + "%"]] if query else []
-	fields = ["name", "modified", "dt", "enabled", "view"] if script_type == "Client Script" else [
-		"name", "modified", "reference_doctype", "disabled", "script_type", "api_method"]
-	rows = frappe.get_list(script_type, filters=filters, fields=fields, order_by="name asc",
-		start=offset, page_length=limit + 1)
+	fields = (
+		["name", "modified", "dt", "enabled", "view"]
+		if script_type == "Client Script"
+		else ["name", "modified", "reference_doctype", "disabled", "script_type", "api_method"]
+	)
+	rows = frappe.get_list(
+		script_type, filters=filters, fields=fields, order_by="name asc", start=offset, page_length=limit + 1
+	)
 	return {"scripts": rows[:limit], "next_offset": offset + limit if len(rows) > limit else None}
 
 
@@ -75,9 +88,14 @@ def read_script(script_type, name, start_line=1, line_count=200):
 	doc = get_script_doc(script_type, name)
 	lines = (doc.script or "").splitlines(keepends=True)
 	result = metadata(doc)
-	result.update({"script": "".join(lines[start_line - 1:start_line - 1 + line_count]),
-		"start_line": start_line, "total_lines": len(lines),
-		"next_line": start_line + line_count if start_line - 1 + line_count < len(lines) else None})
+	result.update(
+		{
+			"script": "".join(lines[start_line - 1 : start_line - 1 + line_count]),
+			"start_line": start_line,
+			"total_lines": len(lines),
+			"next_line": start_line + line_count if start_line - 1 + line_count < len(lines) else None,
+		}
+	)
 	return result
 
 
@@ -85,8 +103,8 @@ def validate_script(script_type, script):
 	if len(script.encode("utf-8")) > MAX_SCRIPT_BYTES:
 		raise frappe.ValidationError("Script exceeds the one megabyte limit.")
 	if script_type == "Server Script":
-		from RestrictedPython import compile_restricted
 		from frappe.utils.safe_exec import FrappeTransformer
+		from RestrictedPython import compile_restricted
 
 		# Compilation only: never execute the submitted source.
 		compile_restricted(script, filename="<IGCTools MCP validation>", policy=FrappeTransformer)
@@ -102,9 +120,18 @@ def save_change(doc, script, reason, restored_from=None):
 	if script == (doc.script or ""):
 		return {**metadata(doc), "changed": False, "audit_id": None}
 	before = snapshot(doc)
-	audit = frappe.get_doc({"doctype": "IGC MCP Change", "script_type": doc.doctype,
-		"script_name": doc.name, "change_reason": reason, "actor": frappe.session.user,
-		"before_snapshot": before, "before_hash": digest(before), "restored_from": restored_from})
+	audit = frappe.get_doc(
+		{
+			"doctype": "IGC MCP Change",
+			"script_type": doc.doctype,
+			"script_name": doc.name,
+			"change_reason": reason,
+			"actor": frappe.session.user,
+			"before_snapshot": before,
+			"before_hash": digest(before),
+			"restored_from": restored_from,
+		}
+	)
 	# The archive is a non-executable document, written in the same DB transaction.
 	audit.flags.igctools_mcp_write = True
 	audit.insert(ignore_permissions=True)
@@ -117,9 +144,15 @@ def save_change(doc, script, reason, restored_from=None):
 	audit.after_snapshot = after
 	audit.after_hash = digest(after)
 	audit.save(ignore_permissions=True)
-	return {**metadata(verified), "changed": True, "audit_id": audit.name,
-		"validation": "restricted_python_compilation" if doc.doctype == "Server Script" else "saved_source_verified",
-		"behavior_tested": False}
+	return {
+		**metadata(verified),
+		"changed": True,
+		"audit_id": audit.name,
+		"validation": "restricted_python_compilation"
+		if doc.doctype == "Server Script"
+		else "saved_source_verified",
+		"behavior_tested": False,
+	}
 
 
 def update_script(script_type, name, expected_revision, script, reason):
@@ -138,10 +171,23 @@ def edit_script(script_type, name, expected_revision, old_text, new_text, reason
 
 def script_history(script_type, name, limit=20):
 	get_script_doc(script_type, name)
-	return {"changes": frappe.get_list("IGC MCP Change",
-		filters={"script_type": script_type, "script_name": name},
-		fields=["name", "creation", "actor", "change_reason", "before_hash", "after_hash", "restored_from"],
-		order_by="creation desc", page_length=limit)}
+	return {
+		"changes": frappe.get_list(
+			"IGC MCP Change",
+			filters={"script_type": script_type, "script_name": name},
+			fields=[
+				"name",
+				"creation",
+				"actor",
+				"change_reason",
+				"before_hash",
+				"after_hash",
+				"restored_from",
+			],
+			order_by="creation desc",
+			page_length=limit,
+		)
+	}
 
 
 def restore_script(script_type, name, expected_revision, audit_id, reason):

@@ -17,7 +17,9 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
 
-from igctools import mcp, mcp_auth as auth, mcp_scripts as scripts
+from igctools import mcp
+from igctools import mcp_auth as auth
+from igctools import mcp_scripts as scripts
 from igctools.igctools.doctype.igc_mcp_settings.igc_mcp_settings import CALLBACK
 
 
@@ -26,33 +28,71 @@ class TestScriptMCP(unittest.TestCase):
 		frappe.set_user("Administrator")
 		frappe.db.savepoint("igctools_mcp_test")
 		self.addCleanup(lambda: frappe.db.rollback(save_point="igctools_mcp_test"))
-		self.client = frappe.get_doc({"doctype": "OAuth Client", "app_name": "IGCTools MCP Test",
-			"token_endpoint_auth_method": "None", "grant_type": "Authorization Code", "response_type": "Code",
-			"redirect_uris": CALLBACK, "default_redirect_uri": CALLBACK, "scopes": "all"}).insert()
-		self.settings = frappe._dict(enabled=1, allowed_user="Administrator", site_url="https://vias.cloud",
-			oauth_client=self.client.name)
+		self.client = frappe.get_doc(
+			{
+				"doctype": "OAuth Client",
+				"app_name": "IGCTools MCP Test",
+				"token_endpoint_auth_method": "None",
+				"grant_type": "Authorization Code",
+				"response_type": "Code",
+				"redirect_uris": CALLBACK,
+				"default_redirect_uri": CALLBACK,
+				"scopes": "all",
+			}
+		).insert()
+		self.settings = frappe._dict(
+			enabled=1,
+			allowed_user="Administrator",
+			site_url="https://vias.cloud",
+			oauth_client=self.client.name,
+		)
 		self.settings_patch = patch.object(auth, "get_settings", return_value=self.settings)
 		self.settings_patch.start()
 		self.addCleanup(self.settings_patch.stop)
-		self.doc = frappe.get_doc({"doctype": "Client Script", "name": "IGCTools MCP Test " + uuid.uuid4().hex,
-			"dt": "ToDo", "view": "Form", "enabled": 0, "script": "// original\nconst value = 1;\n"}).insert()
+		self.doc = frappe.get_doc(
+			{
+				"doctype": "Client Script",
+				"name": "IGCTools MCP Test " + uuid.uuid4().hex,
+				"dt": "ToDo",
+				"view": "Form",
+				"enabled": 0,
+				"script": "// original\nconst value = 1;\n",
+			}
+		).insert()
 		self.set_request()
 
 	def tearDown(self):
 		frappe.set_user("Administrator")
 
-	def set_request(self, path="/api/method/igctools.mcp.handle", body=None, headers=None, method="POST", form=None):
+	def set_request(
+		self, path="/api/method/igctools.mcp.handle", body=None, headers=None, method="POST", form=None
+	):
 		headers = {"Accept": "application/json, text/event-stream", **(headers or {})}
 		if form is not None:
-			builder = EnvironBuilder(path=path, base_url="https://vias.cloud", method=method, data=form, headers=headers)
+			builder = EnvironBuilder(
+				path=path, base_url="https://vias.cloud", method=method, data=form, headers=headers
+			)
 		else:
-			builder = EnvironBuilder(path=path, base_url="https://vias.cloud", method=method,
-				data=json.dumps(body or {"jsonrpc": "2.0", "id": 1, "method": "ping"}), content_type="application/json", headers=headers)
+			builder = EnvironBuilder(
+				path=path,
+				base_url="https://vias.cloud",
+				method=method,
+				data=json.dumps(body or {"jsonrpc": "2.0", "id": 1, "method": "ping"}),
+				content_type="application/json",
+				headers=headers,
+			)
 		frappe.local.request = Request(builder.get_environ())
 		frappe.local.form_dict = frappe._dict(form or {})
 
 	def invoke(self, name, args):
-		self.set_request(body={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})
+		self.set_request(
+			body={
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/call",
+				"params": {"name": name, "arguments": args},
+			}
+		)
 		with patch.object(auth, "authenticate", return_value=None):
 			return mcp.handle().get_json()
 
@@ -60,8 +100,13 @@ class TestScriptMCP(unittest.TestCase):
 		return {"script_type": "Client Script", "name": self.doc.name}
 
 	def edit_args(self):
-		return {**self.identity(), "expected_revision": scripts.read_script(**self.identity())["revision"],
-			"old_text": "value = 1", "new_text": "value = 2", "reason": "Integration test"}
+		return {
+			**self.identity(),
+			"expected_revision": scripts.read_script(**self.identity())["revision"],
+			"old_text": "value = 1",
+			"new_text": "value = 2",
+			"reason": "Integration test",
+		}
 
 	def test_edit_preserves_state_and_archives_exact_original(self):
 		before = scripts.snapshot(frappe.get_doc("Client Script", self.doc.name))
@@ -80,11 +125,18 @@ class TestScriptMCP(unittest.TestCase):
 		frappe.db.set_value("Client Script", self.doc.name, "script", "// concurrent change")
 		with self.assertRaises(frappe.TimestampMismatchError):
 			scripts.edit_script(**args)
-		self.assertEqual(frappe.db.get_value("Client Script", self.doc.name, "script"), "// concurrent change")
+		self.assertEqual(
+			frappe.db.get_value("Client Script", self.doc.name, "script"), "// concurrent change"
+		)
 
 	def test_restore_creates_another_backup(self):
 		changed = scripts.edit_script(**self.edit_args())
-		result = scripts.restore_script(**self.identity(), expected_revision=changed["revision"], audit_id=changed["audit_id"], reason="Restore test")
+		result = scripts.restore_script(
+			**self.identity(),
+			expected_revision=changed["revision"],
+			audit_id=changed["audit_id"],
+			reason="Restore test",
+		)
 		self.assertEqual(frappe.db.get_value("Client Script", self.doc.name, "script"), self.doc.script)
 		self.assertNotEqual(changed["audit_id"], result["audit_id"])
 
@@ -92,7 +144,12 @@ class TestScriptMCP(unittest.TestCase):
 		changed = scripts.edit_script(**self.edit_args())
 		frappe.db.set_value("IGC MCP Change", changed["audit_id"], "before_snapshot", "{}")
 		with self.assertRaises(frappe.ValidationError):
-			scripts.restore_script(**self.identity(), expected_revision=changed["revision"], audit_id=changed["audit_id"], reason="Corrupt test")
+			scripts.restore_script(
+				**self.identity(),
+				expected_revision=changed["revision"],
+				audit_id=changed["audit_id"],
+				reason="Corrupt test",
+			)
 
 	def test_backup_is_not_editable_through_document_save(self):
 		changed = scripts.edit_script(**self.edit_args())
@@ -109,6 +166,7 @@ class TestScriptMCP(unittest.TestCase):
 
 	def test_failure_rolls_back_source_and_backup(self):
 		from frappe.custom.doctype.client_script.client_script import ClientScript
+
 		before = frappe.db.count("IGC MCP Change")
 		with patch.object(ClientScript, "on_update", side_effect=RuntimeError("forced test failure")):
 			result = self.invoke("edit_script", self.edit_args())
@@ -142,14 +200,27 @@ class TestScriptMCP(unittest.TestCase):
 		self.assertEqual(mcp.handle().status_code, 404)
 
 	def test_protocol_initialize_and_no_stream(self):
-		self.set_request(body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2099-01-01"}})
+		self.set_request(
+			body={
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "initialize",
+				"params": {"protocolVersion": "2099-01-01"},
+			}
+		)
 		with patch.object(auth, "authenticate", return_value=None):
 			self.assertEqual(mcp.handle().get_json()["result"]["protocolVersion"], "2025-06-18")
 			self.set_request(method="GET")
 			self.assertEqual(mcp.handle().status_code, 405)
 
 	def test_notification_cannot_execute_write(self):
-		self.set_request(body={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "edit_script", "arguments": self.edit_args()}})
+		self.set_request(
+			body={
+				"jsonrpc": "2.0",
+				"method": "tools/call",
+				"params": {"name": "edit_script", "arguments": self.edit_args()},
+			}
+		)
 		with patch.object(auth, "authenticate", return_value=None):
 			self.assertEqual(mcp.handle().status_code, 400)
 		self.assertEqual(frappe.db.get_value("Client Script", self.doc.name, "script"), self.doc.script)
@@ -171,20 +242,37 @@ class TestScriptMCP(unittest.TestCase):
 	def create_code(self):
 		verifier = "v" * 64
 		challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-		params = {"client_id": self.client.name, "redirect_uri": CALLBACK, "response_type": "code", "scope": "all",
-			"state": "test-state", "code_challenge": challenge, "code_challenge_method": "S256",
-			"resource": auth.endpoints(self.settings)["resource"]}
+		params = {
+			"client_id": self.client.name,
+			"redirect_uri": CALLBACK,
+			"response_type": "code",
+			"scope": "all",
+			"state": "test-state",
+			"code_challenge": challenge,
+			"code_challenge_method": "S256",
+			"resource": auth.endpoints(self.settings)["resource"],
+		}
 		url = "https://vias.cloud/api/method/igctools.mcp_auth.authorize?" + urlencode(params)
 		server = auth.get_server()
 		scopes, credentials = server.validate_authorization_request(url)
-		headers, body, status = server.create_authorization_response(url, scopes=scopes, credentials=credentials)
+		headers, body, status = server.create_authorization_response(
+			url, scopes=scopes, credentials=credentials
+		)
 		self.assertEqual(status, 302)
 		return parse_qs(urlsplit(headers["Location"]).query)["code"][0], verifier
 
 	def exchange(self, code, verifier):
-		params = {"client_id": self.client.name, "grant_type": "authorization_code", "code": code,
-			"code_verifier": verifier, "redirect_uri": CALLBACK, "resource": auth.endpoints(self.settings)["resource"]}
-		headers, body, status = auth.get_server().create_token_response("https://vias.cloud/api/method/igctools.mcp_auth.token", body=urlencode(params))
+		params = {
+			"client_id": self.client.name,
+			"grant_type": "authorization_code",
+			"code": code,
+			"code_verifier": verifier,
+			"redirect_uri": CALLBACK,
+			"resource": auth.endpoints(self.settings)["resource"],
+		}
+		headers, body, status = auth.get_server().create_token_response(
+			"https://vias.cloud/api/method/igctools.mcp_auth.token", body=urlencode(params)
+		)
 		return json.loads(body), status
 
 	def test_oauth_pkce_exchange_resource_and_native_authentication(self):
@@ -195,6 +283,7 @@ class TestScriptMCP(unittest.TestCase):
 		self.set_request(headers={"Authorization": "Bearer " + value["access_token"]})
 		frappe.set_user("Guest")
 		from frappe.auth import validate_auth
+
 		validate_auth()
 		self.assertEqual(frappe.session.user, "Administrator")
 		self.assertIsNone(auth.authenticate(self.settings))
@@ -214,21 +303,36 @@ class TestScriptMCP(unittest.TestCase):
 	def test_oauth_token_for_wrong_resource_rejected(self):
 		code, verifier = self.create_code()
 		value, status = self.exchange(code, verifier)
-		frappe.db.set_value("IGC MCP Grant", auth.grant_name("Token", value["access_token"]), "resource", "https://other.invalid/mcp")
+		frappe.db.set_value(
+			"IGC MCP Grant",
+			auth.grant_name("Token", value["access_token"]),
+			"resource",
+			"https://other.invalid/mcp",
+		)
 		self.set_request(headers={"Authorization": "Bearer " + value["access_token"]})
 		self.assertEqual(auth.authenticate(self.settings).status_code, 401)
 
 	def test_oauth_refresh_rotates_and_revokes_previous_token(self):
 		code, verifier = self.create_code()
 		first, status = self.exchange(code, verifier)
-		params = {"grant_type": "refresh_token", "refresh_token": first["refresh_token"], "client_id": self.client.name,
-			"resource": auth.endpoints(self.settings)["resource"]}
-		headers, body, status = auth.get_server().create_token_response("https://vias.cloud/api/method/igctools.mcp_auth.token", body=urlencode(params))
+		params = {
+			"grant_type": "refresh_token",
+			"refresh_token": first["refresh_token"],
+			"client_id": self.client.name,
+			"resource": auth.endpoints(self.settings)["resource"],
+		}
+		headers, body, status = auth.get_server().create_token_response(
+			"https://vias.cloud/api/method/igctools.mcp_auth.token", body=urlencode(params)
+		)
 		self.assertEqual(status, 200)
 		second = json.loads(body)
 		self.assertNotEqual(first["access_token"], second["access_token"])
-		self.assertEqual(frappe.db.get_value("OAuth Bearer Token", first["access_token"], "status"), "Revoked")
-		self.assertEqual(frappe.db.get_value("OAuth Bearer Token", second["access_token"], "user"), "Administrator")
+		self.assertEqual(
+			frappe.db.get_value("OAuth Bearer Token", first["access_token"], "status"), "Revoked"
+		)
+		self.assertEqual(
+			frappe.db.get_value("OAuth Bearer Token", second["access_token"], "user"), "Administrator"
+		)
 
 	def test_settings_create_compatible_public_client(self):
 		settings = frappe.get_doc("IGC MCP Settings")
@@ -242,8 +346,14 @@ class TestScriptMCP(unittest.TestCase):
 
 	def test_public_token_endpoint_as_guest(self):
 		code, verifier = self.create_code()
-		params = {"client_id": self.client.name, "grant_type": "authorization_code", "code": code,
-			"code_verifier": verifier, "redirect_uri": CALLBACK, "resource": auth.endpoints(self.settings)["resource"]}
+		params = {
+			"client_id": self.client.name,
+			"grant_type": "authorization_code",
+			"code": code,
+			"code_verifier": verifier,
+			"redirect_uri": CALLBACK,
+			"resource": auth.endpoints(self.settings)["resource"],
+		}
 		frappe.set_user("Guest")
 		self.set_request(path="/api/method/igctools.mcp_auth.token", form=params)
 		result = auth.token()
@@ -251,15 +361,29 @@ class TestScriptMCP(unittest.TestCase):
 		self.assertIn("access_token", result.get_json())
 
 	def test_token_endpoint_rejects_wrong_resource(self):
-		self.set_request(path="/api/method/igctools.mcp_auth.token", form={"client_id": self.client.name, "resource": "https://other.invalid"})
+		self.set_request(
+			path="/api/method/igctools.mcp_auth.token",
+			form={"client_id": self.client.name, "resource": "https://other.invalid"},
+		)
 		with self.assertRaises(frappe.PermissionError):
 			auth.token()
 
 	def test_approval_redirect_has_issuer_and_state(self):
 		challenge = base64.urlsafe_b64encode(hashlib.sha256(b"v" * 64).digest()).decode().rstrip("=")
-		params = {"client_id": self.client.name, "redirect_uri": CALLBACK, "response_type": "code", "scope": "all",
-			"state": "test-state", "code_challenge": challenge, "code_challenge_method": "S256", "resource": auth.endpoints(self.settings)["resource"]}
-		self.set_request(path="/api/method/igctools.mcp_auth.approve?" + urlencode(params), form={"csrf_token": "test-only"})
+		params = {
+			"client_id": self.client.name,
+			"redirect_uri": CALLBACK,
+			"response_type": "code",
+			"scope": "all",
+			"state": "test-state",
+			"code_challenge": challenge,
+			"code_challenge_method": "S256",
+			"resource": auth.endpoints(self.settings)["resource"],
+		}
+		self.set_request(
+			path="/api/method/igctools.mcp_auth.approve?" + urlencode(params),
+			form={"csrf_token": "test-only"},
+		)
 		frappe.local.form_dict.update(params)
 		frappe.local.response = frappe._dict()
 		auth.approve()
@@ -270,13 +394,35 @@ class TestScriptMCP(unittest.TestCase):
 
 	def test_disabled_server_script_edit_and_invalid_source_rejected(self):
 		name = "IGCTools MCP Server Test " + uuid.uuid4().hex
-		frappe.get_doc({"doctype": "Server Script", "name": name, "script_type": "API", "disabled": 1,
-			"api_method": "igctools_mcp_test_" + uuid.uuid4().hex, "script": "value = 1"}).insert()
+		frappe.get_doc(
+			{
+				"doctype": "Server Script",
+				"name": name,
+				"script_type": "API",
+				"disabled": 1,
+				"api_method": "igctools_mcp_test_" + uuid.uuid4().hex,
+				"script": "value = 1",
+			}
+		).insert()
 		identity = {"script_type": "Server Script", "name": name}
 		revision = scripts.read_script(**identity)["revision"]
-		result = scripts.edit_script(**identity, expected_revision=revision, old_text="value = 1", new_text="value = 2", reason="Server test")
+		result = scripts.edit_script(
+			**identity,
+			expected_revision=revision,
+			old_text="value = 1",
+			new_text="value = 2",
+			reason="Server test",
+		)
 		self.assertEqual(frappe.db.get_value("Server Script", name, "disabled"), 1)
-		failed = self.invoke("update_script", {**identity, "expected_revision": result["revision"], "script": "if:", "reason": "Invalid syntax test"})
+		failed = self.invoke(
+			"update_script",
+			{
+				**identity,
+				"expected_revision": result["revision"],
+				"script": "if:",
+				"reason": "Invalid syntax test",
+			},
+		)
 		self.assertTrue(failed["result"]["isError"])
 		self.assertEqual(frappe.db.get_value("Server Script", name, "script"), "value = 2")
 
@@ -286,11 +432,18 @@ def run():
 	# Keep that environment issue out of connector tests without changing the site.
 	missing_energy_settings = not frappe.db.exists("DocType", "Energy Point Settings")
 	if missing_energy_settings:
-		print("Test environment: Energy Point Settings is absent; its hook is disabled only in this test process.")
-		energy_patch = patch("frappe.social.doctype.energy_point_rule.energy_point_rule.is_energy_point_enabled", return_value=False)
+		print(
+			"Test environment: Energy Point Settings is absent; its hook is disabled only in this test process."
+		)
+		energy_patch = patch(
+			"frappe.social.doctype.energy_point_rule.energy_point_rule.is_energy_point_enabled",
+			return_value=False,
+		)
 		energy_patch.start()
 	try:
-		result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(TestScriptMCP))
+		result = unittest.TextTestRunner(verbosity=2).run(
+			unittest.defaultTestLoader.loadTestsFromTestCase(TestScriptMCP)
+		)
 	finally:
 		if missing_energy_settings:
 			energy_patch.stop()
