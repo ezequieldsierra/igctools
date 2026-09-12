@@ -1,9 +1,10 @@
 # Copiar a: apps/igctools/igctools/api/printcard_svg.py
 # Requiere Custom Field en PrintCard: fieldname "svg", fieldtype Long Text (recomendado read_only).
 
-import frappe
 import re
 from xml.etree import ElementTree as ET
+
+import frappe
 
 # =======================
 # Modo de generación
@@ -33,130 +34,130 @@ VECTOR_ONLY = True
 
 
 def _pdf_file_bytes_from_printcard(pc_doc) -> bytes:
-    """
-    Obtiene bytes del PDF del PrintCard de forma determinística.
-    Solo usa el File adjunto al propio PrintCard para evitar cruces
-    entre documentos con el mismo file_url.
-    """
-    if not pc_doc:
-        return b""
+	"""
+	Obtiene bytes del PDF del PrintCard de forma determinística.
+	Solo usa el File adjunto al propio PrintCard para evitar cruces
+	entre documentos con el mismo file_url.
+	"""
+	if not pc_doc:
+		return b""
 
-    file_url = (pc_doc.get("archivo") or "").strip()
-    if not file_url:
-        return b""
+	file_url = (pc_doc.get("archivo") or "").strip()
+	if not file_url:
+		return b""
 
-    attached = frappe.get_all(
-        "File",
-        filters={
-            "attached_to_doctype": "PrintCard",
-            "attached_to_name": pc_doc.name,
-            "file_url": file_url,
-            "is_folder": 0,
-        },
-        fields=["name"],
-        order_by="creation desc",
-        limit=1,
-    )
-    if attached:
-        file_doc = frappe.get_doc("File", attached[0].name)
-        return file_doc.get_content() or b""
+	attached = frappe.get_all(
+		"File",
+		filters={
+			"attached_to_doctype": "PrintCard",
+			"attached_to_name": pc_doc.name,
+			"file_url": file_url,
+			"is_folder": 0,
+		},
+		fields=["name"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if attached:
+		file_doc = frappe.get_doc("File", attached[0].name)
+		return file_doc.get_content() or b""
 
-    return b""
+	return b""
 
 
 def _strip_metadata(s: str) -> str:
-    if not REMOVE_METADATA_TAGS:
-        return s
-    s = re.sub(r"<!--.*?-->", "", s, flags=re.DOTALL)
-    s = re.sub(r"<metadata[^>]*>.*?</metadata>", "", s, flags=re.DOTALL | re.IGNORECASE)
-    s = re.sub(r"<desc[^>]*>.*?</desc>", "", s, flags=re.DOTALL | re.IGNORECASE)
-    s = re.sub(r"<title[^>]*>.*?</title>", "", s, flags=re.DOTALL | re.IGNORECASE)
-    return s
+	if not REMOVE_METADATA_TAGS:
+		return s
+	s = re.sub(r"<!--.*?-->", "", s, flags=re.DOTALL)
+	s = re.sub(r"<metadata[^>]*>.*?</metadata>", "", s, flags=re.DOTALL | re.IGNORECASE)
+	s = re.sub(r"<desc[^>]*>.*?</desc>", "", s, flags=re.DOTALL | re.IGNORECASE)
+	s = re.sub(r"<title[^>]*>.*?</title>", "", s, flags=re.DOTALL | re.IGNORECASE)
+	return s
 
 
 def _minify_numbers(s: str) -> str:
-    prec = max(0, int(SVG_DECIMAL_PRECISION))
+	prec = max(0, int(SVG_DECIMAL_PRECISION))
 
-    def _round_num(m):
-        try:
-            num = float(m.group(0))
-            out = f"{num:.{prec}f}"
-            out = re.sub(r"(?<=\d)0+$", "", out)
-            out = re.sub(r"\.$", "", out)
-            return out
-        except Exception:
-            return m.group(0)
+	def _round_num(m):
+		try:
+			num = float(m.group(0))
+			out = f"{num:.{prec}f}"
+			out = re.sub(r"(?<=\d)0+$", "", out)
+			out = re.sub(r"\.$", "", out)
+			return out
+		except Exception:
+			return m.group(0)
 
-    return re.sub(r"-?\d+\.\d+", _round_num, s)
+	return re.sub(r"-?\d+\.\d+", _round_num, s)
 
 
 def _compress_ws(s: str) -> str:
-    if not COMPRESS_WHITESPACE:
-        return s
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r">\s+<", "><", s)
-    return s.strip()
+	if not COMPRESS_WHITESPACE:
+		return s
+	s = re.sub(r"[ \t]+", " ", s)
+	s = re.sub(r">\s+<", "><", s)
+	return s.strip()
 
 
 def _svg_vector_slim(svg_text: str) -> str:
-    if not svg_text or not VECTOR_ONLY:
-        return svg_text
-    try:
-        NS_SVG = "http://www.w3.org/2000/svg"
-        NS_XLINK = "http://www.w3.org/1999/xlink"
+	if not svg_text or not VECTOR_ONLY:
+		return svg_text
+	try:
+		NS_SVG = "http://www.w3.org/2000/svg"
+		NS_XLINK = "http://www.w3.org/1999/xlink"
 
-        if "xmlns=" not in svg_text:
-            svg_text = svg_text.replace("<svg ", f'<svg xmlns="{NS_SVG}" ', 1)
-        if "xmlns:xlink" not in svg_text:
-            svg_text = svg_text.replace("<svg ", f'<svg xmlns:xlink="{NS_XLINK}" ', 1)
+		if "xmlns=" not in svg_text:
+			svg_text = svg_text.replace("<svg ", f'<svg xmlns="{NS_SVG}" ', 1)
+		if "xmlns:xlink" not in svg_text:
+			svg_text = svg_text.replace("<svg ", f'<svg xmlns:xlink="{NS_XLINK}" ', 1)
 
-        root = ET.fromstring(svg_text)
-        rm_tags = {
-            f"{{{NS_SVG}}}image",
-            f"{{{NS_SVG}}}mask",
-            f"{{{NS_SVG}}}clipPath",
-            f"{{{NS_SVG}}}filter",
-            f"{{{NS_SVG}}}pattern",
-        }
-        rm_attrs = {"clip-path", "mask", "filter"}
+		root = ET.fromstring(svg_text)
+		rm_tags = {
+			f"{{{NS_SVG}}}image",
+			f"{{{NS_SVG}}}mask",
+			f"{{{NS_SVG}}}clipPath",
+			f"{{{NS_SVG}}}filter",
+			f"{{{NS_SVG}}}pattern",
+		}
+		rm_attrs = {"clip-path", "mask", "filter"}
 
-        def walk_remove(parent):
-            to_delete = []
-            for elem in list(parent):
-                if elem.tag in rm_tags:
-                    to_delete.append(elem)
-                    continue
-                walk_remove(elem)
-            for e in to_delete:
-                parent.remove(e)
+		def walk_remove(parent):
+			to_delete = []
+			for elem in list(parent):
+				if elem.tag in rm_tags:
+					to_delete.append(elem)
+					continue
+				walk_remove(elem)
+			for e in to_delete:
+				parent.remove(e)
 
-        walk_remove(root)
+		walk_remove(root)
 
-        def walk_attrs(elem):
-            for a in list(elem.attrib.keys()):
-                if a in rm_attrs:
-                    del elem.attrib[a]
-                if ("href" in a or a.endswith("}href")) and "data:image" in str(elem.attrib.get(a, "")):
-                    del elem.attrib[a]
-            for ch in list(elem):
-                walk_attrs(ch)
+		def walk_attrs(elem):
+			for a in list(elem.attrib.keys()):
+				if a in rm_attrs:
+					del elem.attrib[a]
+				if ("href" in a or a.endswith("}href")) and "data:image" in str(elem.attrib.get(a, "")):
+					del elem.attrib[a]
+			for ch in list(elem):
+				walk_attrs(ch)
 
-        walk_attrs(root)
+		walk_attrs(root)
 
-        svg_out = ET.tostring(root, encoding="unicode")
-        return svg_out
-    except Exception:
-        return svg_text
+		svg_out = ET.tostring(root, encoding="unicode")
+		return svg_out
+	except Exception:
+		return svg_text
 
 
 def _minify_svg(svg_text: str) -> str:
-    if not svg_text:
-        return svg_text
-    s = _strip_metadata(svg_text)
-    s = _minify_numbers(s)
-    s = re.sub(r"\s*([;,:])\s*", r"\1", s)
-    s = _compress_ws(s)
-    return s
+	if not svg_text:
+		return svg_text
+	s = _strip_metadata(svg_text)
+	s = _minify_numbers(s)
+	s = re.sub(r"\s*([;,:])\s*", r"\1", s)
+	s = _compress_ws(s)
+	return s
 
 
 # =======================
@@ -165,102 +166,107 @@ def _minify_svg(svg_text: str) -> str:
 
 
 def _pdf_first_page_to_svg_vector(pdf_bytes: bytes) -> str:
-    try:
-        import fitz
-    except Exception:
-        frappe.log_error("PyMuPDF no está instalado.", "IGCTools: SVG vector")
-        return ""
-    if not pdf_bytes:
-        return ""
-    try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
-            if pdf.page_count < 1:
-                return ""
-            page = pdf.load_page(0)
-            svg = page.get_svg_image(text_as_path=bool(TEXT_AS_PATH))
-            if not svg:
-                return ""
-            svg = _svg_vector_slim(svg)
-            svg = _minify_svg(svg)
-            return svg
-    except Exception as e:
-        frappe.log_error(frappe.utils.cstr(e), "IGCTools: error PDF→SVG vector")
-        return ""
+	try:
+		import fitz
+	except Exception:
+		frappe.log_error("PyMuPDF no está instalado.", "IGCTools: SVG vector")
+		return ""
+	if not pdf_bytes:
+		return ""
+	try:
+		with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+			if pdf.page_count < 1:
+				return ""
+			page = pdf.load_page(0)
+			svg = page.get_svg_image(text_as_path=bool(TEXT_AS_PATH))
+			if not svg:
+				return ""
+			svg = _svg_vector_slim(svg)
+			svg = _minify_svg(svg)
+			return svg
+	except Exception as e:
+		frappe.log_error(frappe.utils.cstr(e), "IGCTools: error PDF→SVG vector")
+		return ""
 
 
 def _pdf_first_page_to_raster_wrapper_svg(pdf_bytes: bytes) -> str:
-    """
-    Renderiza la página a PNG/JPEG y devuelve un SVG mínimo que la referencia por URL.
-    El archivo de imagen se guarda en File y queda muy liviano el SVG.
-    """
-    try:
-        import fitz
-    except Exception:
-        frappe.log_error("PyMuPDF no está instalado.", "IGCTools: raster wrapper")
-        return ""
-    if not pdf_bytes:
-        return ""
+	"""
+	Renderiza la página a PNG/JPEG y devuelve un SVG mínimo que la referencia por URL.
+	El archivo de imagen se guarda en File y queda muy liviano el SVG.
+	"""
+	try:
+		import fitz
+	except Exception:
+		frappe.log_error("PyMuPDF no está instalado.", "IGCTools: raster wrapper")
+		return ""
+	if not pdf_bytes:
+		return ""
 
-    try:
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
-            if pdf.page_count < 1:
-                return ""
-            page = pdf.load_page(0)
+	try:
+		with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+			if pdf.page_count < 1:
+				return ""
+			page = pdf.load_page(0)
 
-            scale = float(RASTER_DPI) / 72.0
-            mat = fitz.Matrix(scale, scale)
-            if RASTER_FORMAT.lower() == "jpeg":
-                pix = page.get_pixmap(matrix=mat, alpha=False)
-                img_bytes = pix.tobytes("jpeg", quality=int(JPEG_QUALITY))
-                ext = "jpg"
-                mime = "image/jpeg"
-            else:
-                pix = page.get_pixmap(matrix=mat, alpha=False)
-                img_bytes = pix.tobytes("png")
-                ext = "png"
-                mime = "image/png"
+			scale = float(RASTER_DPI) / 72.0
+			mat = fitz.Matrix(scale, scale)
+			if RASTER_FORMAT.lower() == "jpeg":
+				pix = page.get_pixmap(matrix=mat, alpha=False)
+				img_bytes = pix.tobytes("jpeg", quality=int(JPEG_QUALITY))
+				ext = "jpg"
+				mime = "image/jpeg"
+			else:
+				pix = page.get_pixmap(matrix=mat, alpha=False)
+				img_bytes = pix.tobytes("png")
+				ext = "png"
+				mime = "image/png"
 
-            w, h = pix.width, pix.height
+			w, h = pix.width, pix.height
 
-            file_name = f"{RASTER_FILE_PREFIX}_{frappe.utils.now_datetime().strftime('%Y%m%d%H%M%S')}.{ext}"
-            fdoc = frappe.get_doc({
-                "doctype": "File",
-                "file_name": file_name,
-                "is_private": int(RASTER_PRIVATE),
-                "content": img_bytes,
-                "attached_to_doctype": None,
-                "attached_to_name": None,
-                "mime_type": mime,
-            }).insert(ignore_permissions=True, ignore_if_duplicate=True)
-            file_url = fdoc.file_url
+			file_name = f"{RASTER_FILE_PREFIX}_{frappe.utils.now_datetime().strftime('%Y%m%d%H%M%S')}.{ext}"
+			fdoc = frappe.get_doc(
+				{
+					"doctype": "File",
+					"file_name": file_name,
+					"is_private": int(RASTER_PRIVATE),
+					"content": img_bytes,
+					"attached_to_doctype": None,
+					"attached_to_name": None,
+					"mime_type": mime,
+				}
+			).insert(ignore_permissions=True, ignore_if_duplicate=True)
+			file_url = fdoc.file_url
 
-            svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
+			svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">
   <image href="{file_url}" x="0" y="0" width="{w}" height="{h}" preserveAspectRatio="xMidYMid meet"/>
-</svg>'''
-            return _compress_ws(svg)
-    except Exception as e:
-        frappe.log_error(frappe.utils.cstr(e), "IGCTools: error PDF→Raster Wrapper")
-        return ""
+</svg>"""
+			return _compress_ws(svg)
+	except Exception as e:
+		frappe.log_error(frappe.utils.cstr(e), "IGCTools: error PDF→Raster Wrapper")
+		return ""
 
 
 def _generate_svg_from_printcard_pdf(pc_doc) -> str:
-    """PDF adjunto al PrintCard → string SVG (misma lógica que MODE)."""
-    pdf_bytes = _pdf_file_bytes_from_printcard(pc_doc)
-    if not pdf_bytes:
-        return ""
-    if MODE == "RASTER_WRAPPER":
-        return _pdf_first_page_to_raster_wrapper_svg(pdf_bytes)
-    if MODE == "VECTOR_SIMPLIFIED":
-        return _pdf_first_page_to_svg_vector(pdf_bytes)
-    try:
-        import fitz
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
-            if pdf.page_count < 1:
-                return ""
-            page = pdf.load_page(0)
-            return page.get_svg_image(text_as_path=True) or ""
-    except Exception:
-        return ""
+	"""PDF adjunto al PrintCard → string SVG (misma lógica que MODE)."""
+	pdf_bytes = _pdf_file_bytes_from_printcard(pc_doc)
+	if not pdf_bytes:
+		return ""
+	renderer = {
+		"RASTER_WRAPPER": _pdf_first_page_to_raster_wrapper_svg,
+		"VECTOR_SIMPLIFIED": _pdf_first_page_to_svg_vector,
+	}.get(MODE)
+	if renderer:
+		return renderer(pdf_bytes)
+	try:
+		import fitz
+
+		with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+			if pdf.page_count < 1:
+				return ""
+			page = pdf.load_page(0)
+			return page.get_svg_image(text_as_path=True) or ""
+	except Exception:
+		return ""
 
 
 # =======================
@@ -269,57 +275,57 @@ def _generate_svg_from_printcard_pdf(pc_doc) -> str:
 
 
 def before_save_printcard_set_svg(doc, method):
-    """
-    Rellena PrintCard.svg desde archivo (PDF).
-    Requiere Custom Field 'svg' (Long Text) en PrintCard.
-    """
-    try:
-        if getattr(doc.flags, "skip_auto_svg", False):
-            return
-        if not doc.meta.get_field("svg"):
-            return
-    except Exception:
-        return
+	"""
+	Rellena PrintCard.svg desde archivo (PDF).
+	Requiere Custom Field 'svg' (Long Text) en PrintCard.
+	"""
+	try:
+		if getattr(doc.flags, "skip_auto_svg", False):
+			return
+		if not doc.meta.get_field("svg"):
+			return
+	except Exception:
+		return
 
-    archivo = (doc.get("archivo") or "").strip()
-    if not archivo:
-        doc.set("svg", "")
-        return
+	archivo = (doc.get("archivo") or "").strip()
+	if not archivo:
+		doc.set("svg", "")
+		return
 
-    svg = _generate_svg_from_printcard_pdf(doc)
-    if svg:
-        doc.set("svg", svg)
+	svg = _generate_svg_from_printcard_pdf(doc)
+	if svg:
+		doc.set("svg", svg)
 
 
 def auto_svg_from_printcard(doc, method):
-    """
-    before_save Project:
-    - Si PrintCard.svg ya existe, copia a doc.svg_arte (varios Project pueden compartir el mismo PrintCard).
-    - Si no, genera desde el PDF del PrintCard y asigna a doc.svg_arte.
-    """
-    try:
-        if getattr(doc.flags, "skip_auto_svg", False):
-            return
+	"""
+	before_save Project:
+	- Si PrintCard.svg ya existe, copia a doc.svg_arte (varios Project pueden compartir el mismo PrintCard).
+	- Si no, genera desde el PDF del PrintCard y asigna a doc.svg_arte.
+	"""
+	try:
+		if getattr(doc.flags, "skip_auto_svg", False):
+			return
 
-        pc_name = (doc.get("printcard") or "").strip()
-        if not pc_name:
-            return
+		pc_name = (doc.get("printcard") or "").strip()
+		if not pc_name:
+			return
 
-        if doc.meta.get_field("svg_arte"):
-            svg_pc = (frappe.db.get_value("PrintCard", pc_name, "svg") or "").strip()
-            if svg_pc and "<svg" in svg_pc.lower():
-                doc.set("svg_arte", svg_pc)
-                return
+		if doc.meta.get_field("svg_arte"):
+			svg_pc = (frappe.db.get_value("PrintCard", pc_name, "svg") or "").strip()
+			if svg_pc and "<svg" in svg_pc.lower():
+				doc.set("svg_arte", svg_pc)
+				return
 
-        pc = frappe.get_doc("PrintCard", pc_name)
-        if not (pc.get("archivo") or "").strip():
-            return
+		pc = frappe.get_doc("PrintCard", pc_name)
+		if not (pc.get("archivo") or "").strip():
+			return
 
-        svg = _generate_svg_from_printcard_pdf(pc)
-        if svg and doc.meta.get_field("svg_arte"):
-            doc.set("svg_arte", svg)
-    except Exception as e:
-        frappe.log_error(frappe.utils.cstr(e), "IGCTools: auto_svg_from_printcard")
+		svg = _generate_svg_from_printcard_pdf(pc)
+		if svg and doc.meta.get_field("svg_arte"):
+			doc.set("svg_arte", svg)
+	except Exception as e:
+		frappe.log_error(frappe.utils.cstr(e), "IGCTools: auto_svg_from_printcard")
 
 
 # =======================
@@ -328,97 +334,103 @@ def auto_svg_from_printcard(doc, method):
 
 
 def _update_one_project_svg(proj_name: str, force: bool = False) -> dict:
-    proj = frappe.get_doc("Project", proj_name)
-    pc_name = (proj.get("printcard") or "").strip()
-    if not pc_name:
-        return {"project": proj_name, "skipped": True, "reason": "no_printcard"}
+	proj = frappe.get_doc("Project", proj_name)
+	pc_name = (proj.get("printcard") or "").strip()
+	if not pc_name:
+		return {"project": proj_name, "skipped": True, "reason": "no_printcard"}
 
-    svg_pc = (frappe.db.get_value("PrintCard", pc_name, "svg") or "").strip()
-    if svg_pc and "<svg" in svg_pc.lower():
-        if (proj.get("svg_arte") or "") and not force:
-            return {"project": proj_name, "skipped": True, "reason": "has_svg"}
-        proj.flags.skip_auto_svg = True
-        proj.set("svg_arte", svg_pc)
-        proj.save(ignore_permissions=True)
-        return {"project": proj_name, "updated": True, "bytes": len(svg_pc.encode("utf-8"))}
+	svg_pc = (frappe.db.get_value("PrintCard", pc_name, "svg") or "").strip()
+	if svg_pc and "<svg" in svg_pc.lower():
+		if (proj.get("svg_arte") or "") and not force:
+			return {"project": proj_name, "skipped": True, "reason": "has_svg"}
+		proj.flags.skip_auto_svg = True
+		proj.set("svg_arte", svg_pc)
+		proj.save(ignore_permissions=True)
+		return {"project": proj_name, "updated": True, "bytes": len(svg_pc.encode("utf-8"))}
 
-    if (proj.get("svg_arte") or "") and not force:
-        return {"project": proj_name, "skipped": True, "reason": "has_svg"}
+	if (proj.get("svg_arte") or "") and not force:
+		return {"project": proj_name, "skipped": True, "reason": "has_svg"}
 
-    pc = frappe.get_doc("PrintCard", pc_name)
-    if not (pc.get("archivo") or "").strip():
-        return {"project": proj_name, "skipped": True, "reason": "no_pdf"}
+	pc = frappe.get_doc("PrintCard", pc_name)
+	if not (pc.get("archivo") or "").strip():
+		return {"project": proj_name, "skipped": True, "reason": "no_pdf"}
 
-    svg = _generate_svg_from_printcard_pdf(pc)
-    if not svg:
-        return {"project": proj_name, "skipped": True, "reason": "svg_empty_or_error"}
+	svg = _generate_svg_from_printcard_pdf(pc)
+	if not svg:
+		return {"project": proj_name, "skipped": True, "reason": "svg_empty_or_error"}
 
-    proj.flags.skip_auto_svg = True
-    proj.set("svg_arte", svg)
-    proj.save(ignore_permissions=True)
-    return {"project": proj_name, "updated": True, "bytes": len(svg.encode("utf-8"))}
+	proj.flags.skip_auto_svg = True
+	proj.set("svg_arte", svg)
+	proj.save(ignore_permissions=True)
+	return {"project": proj_name, "updated": True, "bytes": len(svg.encode("utf-8"))}
 
 
 def _rebuild_job(batch_size: int = 200, force: bool = False, only_empty: bool = True):
-    filters = [["printcard", "is", "set"]]
-    if only_empty and not force:
-        filters.append(["svg_arte", "=", ""])
+	filters = [["printcard", "is", "set"]]
+	if only_empty and not force:
+		filters.append(["svg_arte", "=", ""])
 
-    total = frappe.db.count("Project", filters=filters)
-    done = 0
-    start = 0
+	total = frappe.db.count("Project", filters=filters)
+	done = 0
+	start = 0
 
-    while True:
-        names = frappe.get_all(
-            "Project", filters=filters, fields=["name"],
-            start=start, page_length=batch_size, order_by="modified asc",
-        )
-        if not names:
-            break
+	while True:
+		names = frappe.get_all(
+			"Project",
+			filters=filters,
+			fields=["name"],
+			start=start,
+			page_length=batch_size,
+			order_by="modified asc",
+		)
+		if not names:
+			break
 
-        for row in names:
-            try:
-                _update_one_project_svg(row.name, force=force)
-            except Exception as e:
-                frappe.log_error(
-                    frappe.utils.cstr(e),
-                    f"IGCTools: batch SVG failed for {row.name}",
-                )
-            done += 1
+		for row in names:
+			try:
+				_update_one_project_svg(row.name, force=force)
+			except Exception as e:
+				frappe.log_error(
+					frappe.utils.cstr(e),
+					f"IGCTools: batch SVG failed for {row.name}",
+				)
+			done += 1
 
-        frappe.db.commit()
-        start += batch_size
+		# Long-running rebuild checkpoints each completed batch, preserving work across later batch failures.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit
+		start += batch_size
 
-    return {"ok": True, "total": total, "processed": done, "force": force, "only_empty": only_empty}
+	return {"ok": True, "total": total, "processed": done, "force": force, "only_empty": only_empty}
 
 
 @frappe.whitelist()
 def rebuild_project_svgs(batch_size: int = 200, force: int = 0, only_empty: int = 1, enqueue: int = 1):
-    if not frappe.has_permission(doctype="Project", ptype="write"):
-        frappe.throw("Permisos insuficientes")
+	if not frappe.has_permission(doctype="Project", ptype="write"):
+		frappe.throw(frappe._("Permisos insuficientes"))
 
-    force_b = bool(int(force))
-    only_empty_b = bool(int(only_empty))
-    enqueue_b = bool(int(enqueue))
+	force_b = bool(int(force))
+	only_empty_b = bool(int(only_empty))
+	enqueue_b = bool(int(enqueue))
 
-    if enqueue_b:
-        job = frappe.enqueue(
-            "igctools.api.printcard_svg._rebuild_job",
-            queue="long",
-            job_name="IGCTools: Rebuild Project SVGs",
-            timeout=60 * 60,
-            batch_size=int(batch_size),
-            force=force_b,
-            only_empty=only_empty_b,
-        )
-        return {"enqueued": True, "job_name": job.get_id()}
-    return _rebuild_job(batch_size=int(batch_size), force=force_b, only_empty=only_empty_b)
+	if enqueue_b:
+		job = frappe.enqueue(
+			"igctools.api.printcard_svg._rebuild_job",
+			queue="long",
+			job_name="IGCTools: Rebuild Project SVGs",
+			timeout=60 * 60,
+			batch_size=int(batch_size),
+			force=force_b,
+			only_empty=only_empty_b,
+		)
+		return {"enqueued": True, "job_name": job.get_id()}
+	return _rebuild_job(batch_size=int(batch_size), force=force_b, only_empty=only_empty_b)
 
 
 @frappe.whitelist()
 def pymupdf_status():
-    try:
-        import fitz
-        return {"ok": True, "version": getattr(fitz, "__version__", None)}
-    except Exception as e:
-        return {"ok": False, "error": repr(e)}
+	try:
+		import fitz
+
+		return {"ok": True, "version": getattr(fitz, "__version__", None)}
+	except Exception as e:
+		return {"ok": False, "error": repr(e)}

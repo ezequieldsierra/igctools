@@ -19,7 +19,7 @@
    "fieldname": "script_type",
    "fieldtype": "Select",
    "label": "Script Type",
-   "options": "Client Script\nServer Script",
+   "options": "Client Script\nServer Script\nPrint Format\nPrint Default",
    "reqd": 1,
    "in_list_view": 1
   },

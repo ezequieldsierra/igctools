@@ -1,6 +1,6 @@
 <div class="text-left">
-  <p>Allow ChatGPT to read, edit and restore Client Scripts and Server Scripts on this site?</p>
-  <p>Changes keep a backup of the original source. Existing activation settings and triggers are preserved.</p>
+  <p>Allow ChatGPT to manage scripts and print formats, set default print formats, and execute System Console scripts on this site?</p>
+  <p>Script and print-format changes keep backups. Existing script activation settings and triggers are preserved. Console executions use your permissions and record source, status, output and errors. Commit controls database persistence; external effects are not undone by rollback.</p>
   <form method="post" action="{{ success_url }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="btn btn-primary">Allow</button>
