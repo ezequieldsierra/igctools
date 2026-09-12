@@ -1,0 +1,9 @@
+<div class="text-left">
+  <p>Allow ChatGPT to read, edit and restore Client Scripts and Server Scripts on this site?</p>
+  <p>Changes keep a backup of the original source. Existing activation settings and triggers are preserved.</p>
+  <form method="post" action="{{ success_url }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-primary">Allow</button>
+    <a href="{{ failure_url }}" class="btn btn-default">Deny</a>
+  </form>
+</div>
