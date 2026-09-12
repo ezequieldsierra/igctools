@@ -135,11 +135,13 @@ class MCPValidator(OAuthWebRequestValidator):
 	"""Restrict native OAuth to one client, one resource and one authorized user."""
 
 	def validate_client_id(self, client_id, request, *args, **kwargs):
+		from igctools.igctools.doctype.igc_mcp_settings.igc_mcp_settings import is_connector_client
+
 		settings = get_settings()
 		if not settings.enabled or client_id != settings.oauth_client:
 			return False
 		request.client = frappe.get_doc("OAuth Client", client_id)
-		return request.client.get("token_endpoint_auth_method") == "None"
+		return is_connector_client(request.client)
 
 	def client_authentication_required(self, request, *args, **kwargs):
 		return False

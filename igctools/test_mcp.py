@@ -5,6 +5,7 @@ No business script is executed or modified.
 """
 
 import base64
+import copy
 import hashlib
 import json
 import unittest
@@ -340,9 +341,56 @@ class TestScriptMCP(unittest.TestCase):
 		settings.oauth_client = None
 		settings.validate()
 		client = frappe.get_doc("OAuth Client", settings.oauth_client)
-		self.assertEqual(client.token_endpoint_auth_method, "None")
+		if client.meta.has_field("token_endpoint_auth_method"):
+			self.assertEqual(client.token_endpoint_auth_method, "None")
 		self.assertEqual(settings.oauth_client_id, client.client_id)
 		self.assertEqual(settings.server_url, "https://vias.cloud/api/method/igctools.mcp.handle")
+
+	def standard_oauth_schema(self):
+		from frappe.integrations.doctype.oauth_client.oauth_client import OAuthClient
+
+		meta = copy.deepcopy(frappe.get_meta("OAuth Client"))
+		meta.fields = [f for f in meta.fields if f.fieldname != "token_endpoint_auth_method"]
+		meta.__dict__.pop("_valid_columns", None)
+		meta.init_field_caches()
+		return patch.object(OAuthClient, "meta", meta)
+
+	def test_standard_oauth_schema_saves_settings_and_authorizes_with_pkce(self):
+		# Reproduce production's standard v15 schema without changing this site's schema.
+		with self.standard_oauth_schema():
+			settings = frappe.get_doc("IGC MCP Settings")
+			settings.enabled, settings.allowed_user, settings.site_url = (
+				1,
+				"Administrator",
+				"https://vias.cloud",
+			)
+			settings.oauth_client = None
+			settings.save()
+			saved = frappe.get_doc("IGC MCP Settings")
+			self.client = frappe.get_doc("OAuth Client", saved.oauth_client)
+			self.assertFalse(self.client.meta.has_field("token_endpoint_auth_method"))
+			self.assertEqual(saved.oauth_client_id, self.client.client_id)
+			self.assertEqual(saved.server_url, auth.endpoints(self.settings)["resource"])
+			self.settings.oauth_client = self.client.name
+			self.test_oauth_pkce_exchange_resource_and_native_authentication()
+			frappe.set_user("Administrator")
+			self.test_oauth_refresh_rotates_and_revokes_previous_token()
+			self.test_oauth_wrong_verifier_rejected()
+
+	def test_standard_oauth_schema_still_rejects_changed_client_configuration(self):
+		with self.standard_oauth_schema():
+			for field, value in (
+				("redirect_uris", CALLBACK + " https://other.invalid/callback"),
+				("default_redirect_uri", "https://other.invalid/callback"),
+				("grant_type", "Implicit"),
+				("scopes", "all openid"),
+				("skip_authorization", 1),
+			):
+				with self.subTest(field=field):
+					original = frappe.db.get_value("OAuth Client", self.client.name, field)
+					frappe.db.set_value("OAuth Client", self.client.name, field, value)
+					self.assertFalse(auth.MCPValidator().validate_client_id(self.client.name, frappe._dict()))
+					frappe.db.set_value("OAuth Client", self.client.name, field, original)
 
 	def test_public_token_endpoint_as_guest(self):
 		code, verifier = self.create_code()
