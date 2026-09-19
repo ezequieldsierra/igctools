@@ -59,7 +59,7 @@ def normalized(text):
 			node = self.generic_visit(node)
 			name = ast.unparse(node.func)
 			if name == "prepare_printcard_source":
-				# The sole intentional page-generation change; covered in test_layers.py.
+				# Intentional separation behavior, covered in test_layers.py.
 				assert len(node.args) == 1 and ast.unparse(node.args[0]) == "pdf2_path"
 				assert not node.keywords
 				node.func = ast.Name(id="PdfReader", ctx=ast.Load())
@@ -73,12 +73,28 @@ def normalized(text):
 				return node.args[0]
 			return node
 
+		def visit_Expr(self, node):
+			if isinstance(node.value, ast.Call) and ast.unparse(node.value.func) == "add_separation_label":
+				# Explicit decoration after placement; pixel parity is tested below the margin.
+				assert [ast.unparse(arg) for arg in node.value.args] == [
+					"combined_page",
+					"pdf2_page",
+					"top_margin",
+					"right_margin",
+				]
+				assert not node.value.keywords
+				return None
+			return self.generic_visit(node)
+
 		def visit_JoinedStr(self, node):
 			if all(isinstance(part, ast.Constant) for part in node.values):
 				return ast.Constant("".join(part.value for part in node.values))
 			return self.generic_visit(node)
 
 		def visit_ImportFrom(self, node):
+			if node.module == "igctools.printcard.page_labels":
+				assert [name.name for name in node.names] == ["add_separation_label"]
+				return None
 			if node.module == "igctools.printcard.layers":
 				assert [name.name for name in node.names] == ["prepare_printcard_source"]
 				return None
