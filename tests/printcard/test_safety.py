@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from conftest import NEW, frappe, utils
+from conftest import NEW, Bag, frappe, utils
 
 from igctools.printcard.file_safety import confined_file_path
 
@@ -39,3 +39,15 @@ def test_art_identifiers_are_passed_as_sql_parameters():
 	assert doc.codigo_arte not in query
 	assert values == (doc.codigo_arte, 3)
 	assert doc.version == 3
+
+
+@pytest.mark.parametrize("decoded", [False, True])
+def test_svg_receives_identical_bytes_when_frappe_decodes_a_pdf(decoded):
+	from igctools.api import printcard_svg
+
+	payload = "%PDF-1.7\n%µ¶\n".encode()
+	frappe.get_all.return_value = [Bag(name="FILE1")]
+	frappe.get_doc.return_value.get_content.return_value = payload.decode() if decoded else payload
+	pc = Bag(name="PC1", archivo="/private/files/source.pdf")
+	assert printcard_svg._pdf_file_bytes_from_printcard(pc) == payload
+	assert frappe.get_all.call_args.kwargs["filters"]["attached_to_name"] == "PC1"

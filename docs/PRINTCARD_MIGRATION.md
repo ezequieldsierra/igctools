@@ -62,6 +62,10 @@ Los hooks sustituyen el controlador completo y siete rutas de generación, firma
 y listado, incluidas las rutas antiguas que utilizan los scripts actuales. Esto
 es necesario porque una sustitución HTTP no intercepta imports internos Python.
 Los eventos SVG de PrintCard/Project y el override de Job Card siguen vigentes.
+La integración descubrió un defecto anterior en SVG: Frappe puede devolver como
+texto un PDF válido en UTF-8 y PyMuPDF requiere bytes. El lector de adjuntos de
+IGCTools ahora recupera esos mismos bytes antes de renderizar. Se comprueban ambas
+formas de contenido y se conserva el filtro del File adjunto al PrintCard exacto.
 Las tareas de firma nuevas usan la función de IGCTools y `enqueue_after_commit`.
 Las tareas antiguas conservan una ruta válida mientras PowerPro siga instalado.
 

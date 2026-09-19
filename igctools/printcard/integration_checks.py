@@ -234,7 +234,7 @@ class TestPrintCardIntegration(unittest.TestCase):
 			self.assertTrue(pc.svg, "Existing SVG hook did not produce a preview; see captured errors.")
 			self.assertIn("<svg", pc.svg)
 		self.assertEqual(pc.codigo, "CODE-1")
-		self.assertEqual(frappe.get_doc("File", file.name).get_content(), payload)
+		self.assertEqual(Path(helper.get_file_path(file.file_url)).read_bytes(), payload)
 		with fitz.open(helper.get_file_path(pc.printcard_file)) as pdf:
 			self.assertEqual(len(pdf), 2)
 			self.assertIn("FIRST ART PAGE", pdf[0].get_text())
@@ -273,7 +273,7 @@ class TestPrintCardIntegration(unittest.TestCase):
 				self.assertTrue(page.get_images())
 		self.assertEqual(pc.archivo, file.file_url)
 		self.assertEqual(frappe.get_doc("Arte", arte.name).archivo_printcard_aprobado, file.file_url)
-		self.assertEqual(frappe.get_doc("File", file.name).get_content(), payload)
+		self.assertEqual(Path(helper.get_file_path(file.file_url)).read_bytes(), payload)
 		# Read filtering remains assigned-user based for Website Users.
 		user = frappe.get_doc(
 			doctype="User",
