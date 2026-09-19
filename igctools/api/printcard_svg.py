@@ -60,7 +60,10 @@ def _pdf_file_bytes_from_printcard(pc_doc) -> bytes:
 	)
 	if attached:
 		file_doc = frappe.get_doc("File", attached[0].name)
-		return file_doc.get_content() or b""
+		content = file_doc.get_content() or b""
+		# Frappe decodes valid UTF-8 files, including some uncompressed PDFs.
+		# PyMuPDF's stream API requires bytes; restore the original UTF-8 bytes.
+		return content.encode("utf-8") if isinstance(content, str) else content
 
 	return b""
 
