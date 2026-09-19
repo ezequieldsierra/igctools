@@ -163,6 +163,8 @@ class TestPrintCardIntegration(unittest.TestCase):
 		from frappe.handler import execute_cmd
 		from frappe.model.base_document import get_controller
 
+		from igctools.api import printcard_svg
+
 		self.assertEqual(get_controller("PrintCard").__module__, "igctools.printcard.controller")
 		migration.verify_activation()
 		arte = frappe.get_doc(
@@ -221,20 +223,25 @@ class TestPrintCardIntegration(unittest.TestCase):
 		file.db_set(
 			{"attached_to_doctype": "PrintCard", "attached_to_name": pc.name, "attached_to_field": "archivo"}
 		)
+		self.assertEqual(printcard_svg._pdf_file_bytes_from_printcard(pc), payload)
 		pc.estado = "Listo para Someter"
 		pc.save()
 		pc.estado = "Pendiente"
 		pc.save()
 		pc.reload()
 		self.assertTrue(pc.printcard_file)
-		self.assertIn("<svg", pc.svg)
+		with self.subTest("SVG preview on save"):
+			self.assertTrue(pc.svg, "Existing SVG hook did not produce a preview; see captured errors.")
+			self.assertIn("<svg", pc.svg)
 		self.assertEqual(pc.codigo, "CODE-1")
 		self.assertEqual(frappe.get_doc("File", file.name).get_content(), payload)
 		with fitz.open(helper.get_file_path(pc.printcard_file)) as pdf:
 			self.assertEqual(len(pdf), 2)
 			self.assertIn("FIRST ART PAGE", pdf[0].get_text())
 		project = frappe.get_doc(doctype="Project", printcard=pc.name).insert()
-		self.assertEqual(project.svg_arte, pc.svg)
+		with self.subTest("Project SVG copy"):
+			self.assertTrue(project.svg_arte)
+			self.assertEqual(project.svg_arte, pc.svg)
 		manual = pc.generate_printcard_pdf_on_demand()
 		self.assertEqual(manual["printcard_file"], pc.printcard_file)
 		frappe.local.form_dict = frappe._dict(printcard=pc.name)
@@ -290,10 +297,17 @@ class TestPrintCardIntegration(unittest.TestCase):
 def run():
 	assert_disposable_site()
 	# Nothing can send mail or execute a background task outside this test process.
-	with patch.object(frappe, "sendmail"), patch.object(frappe, "enqueue"):
+	with (
+		patch.object(frappe, "sendmail"),
+		patch.object(frappe, "enqueue"),
+		patch.object(frappe, "log_error", wraps=frappe.log_error) as errors,
+	):
 		result = unittest.TextTestRunner(verbosity=2).run(
 			unittest.defaultTestLoader.loadTestsFromTestCase(TestPrintCardIntegration)
 		)
+		if not result.wasSuccessful():
+			for error in errors.call_args_list:
+				print("Captured disposable-site error:", error)
 	frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore test runner identity
 	frappe.db.rollback()
 	if not result.wasSuccessful():
