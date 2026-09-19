@@ -54,13 +54,19 @@ def verify_activation():
 	controller = get_controller("PrintCard")
 	if not source_status()["compatible"]:
 		if controller.__module__.startswith("igctools.printcard"):
-			frappe.throw("PrintCard: reiniciar procesos; un controlador IGCTools incompatible sigue activo.")
+			frappe.throw(
+				frappe._("PrintCard: reiniciar procesos; un controlador IGCTools incompatible sigue activo.")
+			)
 		for source in METHOD_OVERRIDES:
 			if frappe.override_whitelisted_method(source).startswith("igctools.printcard."):
-				frappe.throw("PrintCard: reiniciar procesos; una ruta IGCTools incompatible sigue activa.")
+				frappe.throw(
+					frappe._("PrintCard: reiniciar procesos; una ruta IGCTools incompatible sigue activa.")
+				)
 		conditions = frappe.get_hooks("permission_query_conditions").get("PrintCard", [])
 		if "igctools.printcard.permissions.printcard_query_conditions" in conditions:
-			frappe.throw("PrintCard: reiniciar procesos; un filtro IGCTools incompatible sigue activo.")
+			frappe.throw(
+				frappe._("PrintCard: reiniciar procesos; un filtro IGCTools incompatible sigue activo.")
+			)
 		return
 	if f"{controller.__module__}.{controller.__name__}" != CONTROLLER:
 		frappe.throw(frappe._("PrintCard: otra app está sustituyendo el controlador de IGCTools."))

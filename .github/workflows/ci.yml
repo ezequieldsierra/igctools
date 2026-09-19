@@ -50,6 +50,20 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Check out exact audited PowerPro source
+        uses: actions/checkout@v4
+        with:
+          repository: YefriTavarez/powerpro
+          ref: e03c488da3cd69e2bbea69e738805687f86eee90
+          path: .upstream-powerpro
+          persist-credentials: false
+          sparse-checkout: |
+            powerpro/controllers/printcard
+            powerpro/controllers/pdf_manager
+
+      - name: Verify PrintCard provenance against Git bytes
+        run: python tests/verify_printcard_origin.py .upstream-powerpro
+
       - name: Setup Node
         uses: actions/setup-node@v3
         with:

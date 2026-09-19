@@ -87,6 +87,11 @@ no se publican en este repositorio.
 - Licencia MIT y atribución conservadas en `igctools/printcard/LICENSE.powerpro`.
 - `origin.json` registra SHA-256 de los seis archivos originales. El fixture ZIP
   contiene esos archivos sin modificar para comparar ambos motores.
+- CI obtiene por separado el commit original de PowerPro y compara sus bytes y
+  objetos Git contra cada entrada del ZIP y el manifiesto. La referencia inicial
+  contenía un salto de línea adicional en `controller.py`, `helper.py` y
+  `permissions.py`; los SHA-256 se corrigieron desde `git show`, sin normalizar
+  ni aceptar diferencias arbitrarias del código instalado.
 - El fixture de esquema procede del archivo público de PowerPro
   `powerpro/preproigc/doctype/printcard/printcard.json` en el mismo commit;
   no es una exportación de metadatos privados del sitio. Los Server Scripts

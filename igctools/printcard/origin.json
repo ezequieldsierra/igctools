@@ -5,27 +5,33 @@
   "files": {
     "controller.py": {
       "source": "powerpro/controllers/printcard/printcard.py",
-      "sha256": "473cb2a46b1cea4810e3095dec04125505022baed9410471ad225de840458967"
+      "sha256": "c98114968324af555a453a12e075b28ec3c245415d0d82d784ff32e8a34b2f87",
+      "git_blob_sha": "27c3f69dd6b21cf18c93382af20f5294694ebeec"
     },
     "helper.py": {
       "source": "powerpro/controllers/printcard/helper.py",
-      "sha256": "394265e14250f6260b8561c7e1d53029c4c7cb43b163e3e02244c707208bef63"
+      "sha256": "84b235d0308128ee3ce4a27a1d9c2e940541cfe20504724c3c42ec2ce9da3d9b",
+      "git_blob_sha": "24dc0cc05408f675326cabc44b1a65a66681c40d"
     },
     "permissions.py": {
       "source": "powerpro/controllers/printcard/perms.py",
-      "sha256": "7e024d7cb55e9528c9bcda21ae28e75bafb51b22e7c718e1b99981ddd2019d5a"
+      "sha256": "068377bb6edd99b5a6161b84b85d8bb8014bc41107f5c183b98f2d7f1405223c",
+      "git_blob_sha": "4a1fc811f840f97cccba170989914ad17c42bbbf"
     },
     "client.py": {
       "source": "powerpro/controllers/printcard/client.py",
-      "sha256": "a55763e4385bc8addc73a082bbd180c47a06a56bc6b9bf18f67f9eadae5c9276"
+      "sha256": "a55763e4385bc8addc73a082bbd180c47a06a56bc6b9bf18f67f9eadae5c9276",
+      "git_blob_sha": "75e2d6f9e3608291ee58fa33d73d6f9421318a2c"
     },
     "pdf_manipulator.py": {
       "source": "powerpro/controllers/pdf_manager/pdf_manipulator.py",
-      "sha256": "2bb3d68234f2e83c7ef36a37b339f1b205c9e79890d4d7a60f93987330f22295"
+      "sha256": "2bb3d68234f2e83c7ef36a37b339f1b205c9e79890d4d7a60f93987330f22295",
+      "git_blob_sha": "bd5867d35c9ca628682624552110c06ba5d16020"
     },
     "signature_helper.py": {
       "source": "powerpro/controllers/pdf_manager/signature_helper.py",
-      "sha256": "e6d780d45b71643819134296d15fc7761e912e5e3b8ac546798a21559232db2e"
+      "sha256": "e6d780d45b71643819134296d15fc7761e912e5e3b8ac546798a21559232db2e",
+      "git_blob_sha": "7d22cc9fc7e89dd12e2f1c387b78289d07b053a8"
     }
   }
 }
