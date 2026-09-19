@@ -94,7 +94,8 @@ jobs:
         run: |
           bench get-app igctools $GITHUB_WORKSPACE
           bench setup requirements --dev
-          env/bin/pip install -r apps/igctools/tests/printcard/requirements.txt
+          env/bin/pip install 'pytest>=8,<9'
+          env/bin/pip check
           bench new-site --db-root-password root --admin-password admin test_site
           bench --site test_site install-app igctools
           bench build

@@ -56,7 +56,11 @@ representados en el PDF exportado.
 - Frappe objetivo: 15.121.0, según el sitio auditado. El número de versión de
   PowerPro por sí solo no identifica el código instalado; debe coincidir el hash.
 - No se actualizan las bibliotecas PDF de producción como parte de esta fase.
-  `tests/printcard/requirements.txt` define exclusivamente el entorno de pruebas.
+  `tests/printcard/requirements.txt` define exclusivamente un perfil aislado de
+  pruebas con bibliotecas anteriores; nunca se instala dentro de un bench.
+  CI conserva las dependencias declaradas por Frappe 15.121.0 y ejecuta `pip check`:
+  pypdf 6.15.0, WeasyPrint 69.0 y pydyf 0.12.1. Así no se degrada el entorno de
+  Frappe para conseguir que las pruebas pasen.
 
 Los hooks sustituyen el controlador completo y siete rutas de generación, firma
 y listado, incluidas las rutas antiguas que utilizan los scripts actuales. Esto
