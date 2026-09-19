@@ -26,6 +26,13 @@ PAGE_GROUPS = (
 	("BARNIZ BRILLO", frozenset({"BARNIZ BRILLO"})),
 	("BARNIZ MATTE", frozenset({"BARNIZ MATTE"})),
 )
+# Reference artwork never determines whether an optional page exists.
+PAGE_REFERENCES = {
+	"TROQUEL": frozenset({"DIMENSIONES"}),
+	"RELIEVE": frozenset({"TROQUEL"}),
+	"BARNIZ BRILLO": frozenset({"TROQUEL"}),
+	"BARNIZ MATTE": frozenset({"TROQUEL"}),
+}
 KNOWN_LAYERS = frozenset().union(*(names for _, names in PAGE_GROUPS), {"DIMENSIONES"})
 PATH_PAINT = {b"S", b"s", b"f", b"F", b"f*", b"B", b"B*", b"b", b"b*"}
 TEXT_PAINT = {b"Tj", b"TJ", b"'", b'"'}
@@ -227,8 +234,9 @@ def _has_content(page):
 def prepare_printcard_source(source):
 	"""Return original pages or ordered vector separations, without writing source.
 
-	The first composition always exists. Optional pages require painted content,
-	so a named but empty layer or clipping-only stream does not create a page.
+	The first composition always exists. Optional pages require painted content
+	in their main group before reference layers are added; references alone never
+	create a page for an empty or absent production group.
 	"""
 	reader = PdfReader(source)
 	if len(reader.pages) != 1:
@@ -249,6 +257,10 @@ def prepare_printcard_source(source):
 			continue
 		page = separator.variant(selected)
 		if _has_content(page):
+			if references := PAGE_REFERENCES.get(label):
+				# Draw reference lines last so solid varnish fills cannot obscure them.
+				page.merge_page(separator.variant(references))
+				label += " + " + " + ".join(sorted(references))
 			writer.add_page(page)
 			writer.add_outline_item(label, len(writer.pages) - 1)
 	buffer = BytesIO()

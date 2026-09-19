@@ -43,14 +43,18 @@ Para un PDF de **una página** en `archivo` con grupos de producción reconocibl
 | Orden | Contenido | Condición |
 | --- | --- | --- |
 | 1 | ARTE + TROQUEL + PRESERVADO | Siempre en el modo por capas |
-| 2 | TROQUEL | Sólo si contiene elementos dibujados |
-| 3 | RELIEVE | Sólo si contiene elementos dibujados |
+| 2 | TROQUEL + DIMENSIONES | Sólo si TROQUEL contiene elementos dibujados |
+| 3 | RELIEVE + TROQUEL | Sólo si RELIEVE contiene elementos dibujados |
 | 4 | ESTAMPADO | Sólo si contiene elementos dibujados |
-| 5 | BARNIZ BRILLO | Sólo si contiene elementos dibujados |
-| 6 | BARNIZ MATTE | Sólo si contiene elementos dibujados |
+| 5 | BARNIZ BRILLO + TROQUEL | Sólo si BARNIZ BRILLO contiene elementos dibujados |
+| 6 | BARNIZ MATTE + TROQUEL | Sólo si BARNIZ MATTE contiene elementos dibujados |
 
-Las páginas ausentes se omiten y la numeración queda consecutiva. DIMENSIONES y
-los elementos sin un grupo de producción quedan fuera. Los subgrupos pertenecen
+Las páginas ausentes se omiten y la numeración queda consecutiva. DIMENSIONES
+aparece únicamente en la hoja de TROQUEL. Las capas de referencia se dibujan
+encima de la capa principal para que sus líneas no queden tapadas por un relleno.
+La existencia de TROQUEL no crea páginas de acabados vacíos, ni DIMENSIONES crea
+una hoja de TROQUEL vacío. ESTAMPADO mantiene su contenido propio. Los elementos
+sin un grupo de producción quedan fuera. Los subgrupos pertenecen
 a su grupo principal. Se aceptan nombres sin distinción de mayúsculas y prefijos
 como `1. TROQUEL`. Una capa sólo con estado gráfico o recorte no produce una hoja.
 
@@ -69,7 +73,8 @@ parcial. La separación es visual, no una herramienta de redacción de informaci
 puede conservar texto no visible para mantener sus posiciones PDF.
 
 Se probó privadamente el único PDF proporcionado por el usuario: una página de
-entrada y cinco salidas (composición, TROQUEL, RELIEVE, BARNIZ BRILLO, BARNIZ MATTE).
+entrada y cinco salidas con las combinaciones de la tabla (composición,
+TROQUEL + DIMENSIONES y los tres acabados existentes con TROQUEL).
 ESTAMPADO no existe en esa muestra. La composición coincide píxel por píxel con
 el original; Canvas y firma de prueba cubren las cinco páginas. Los bytes del
 original permanecen iguales. El PDF, los renderizados y los datos del cliente

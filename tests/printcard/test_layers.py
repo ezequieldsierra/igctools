@@ -105,20 +105,20 @@ def test_layer_order_hidden_content_and_empty_omission(tmp_path, ocg, nested):
 	result = prepare_printcard_source(source)
 	assert [item.title for item in result.outline] == [
 		"ARTE + TROQUEL + PRESERVADO",
-		"TROQUEL",
-		"RELIEVE",
-		"BARNIZ BRILLO",
-		"BARNIZ MATTE",
+		"TROQUEL + DIMENSIONES",
+		"RELIEVE + TROQUEL",
+		"BARNIZ BRILLO + TROQUEL",
+		"BARNIZ MATTE + TROQUEL",
 	]
 	with rendered(result) as pdf:
 		assert len(pdf) == 5
 		# Each layer has an independent X coordinate, exposing any content leakage.
 		assert [[round(d["rect"].x0) for d in p.get_drawings()] for p in pdf] == [
 			[10, 40, 70],
-			[70],
-			[100],
-			[160],
-			[190],
+			[70, 220],
+			[100, 70],
+			[160, 70],
+			[190, 70],
 		]
 		assert all(p.rect == fitz.Rect(0, 0, 288, 216) for p in pdf)
 		if not ocg:
@@ -132,10 +132,25 @@ def test_layer_order_hidden_content_and_empty_omission(tmp_path, ocg, nested):
 		(frozenset(), 6),
 		(frozenset({"TROQUEL", "RELIEVE", "ESTAMPADO", "BARNIZ BRILLO", "BARNIZ MATTE"}), 1),
 		(frozenset({"RELIEVE"}), 5),
+		(frozenset({"RELIEVE", "ESTAMPADO", "BARNIZ BRILLO", "BARNIZ MATTE"}), 2),
 	],
 )
 def test_only_populated_optional_pages_are_created(tmp_path, empty, expected):
 	assert len(prepare_printcard_source(layer_fixture(tmp_path / "source.pdf", empty)).pages) == expected
+
+
+def test_estampado_keeps_its_own_artwork_and_missing_references_are_optional(tmp_path):
+	source = layer_fixture(tmp_path / "source.pdf", empty=frozenset({"TROQUEL", "DIMENSIONES"}))
+	result = prepare_printcard_source(source)
+	with rendered(result) as pdf:
+		assert len(pdf) == 5
+		assert [[round(d["rect"].x0) for d in p.get_drawings()] for p in pdf] == [
+			[10, 40],
+			[100],
+			[130],
+			[160],
+			[190],
+		]
 
 
 def test_multipage_and_flattened_pdf_keep_original_content(tmp_path):
@@ -181,7 +196,7 @@ def test_layer_pages_pass_through_existing_canvas_and_signature(tmp_path):
 	with fitz.open(source.parent / "layer-card.pdf") as pdf:
 		assert len(pdf) == 5
 		assert all("PRINTCARD ACME" in p.get_text() for p in pdf)
-		assert [len(p.get_drawings()) for p in pdf] == [3, 1, 1, 1, 1]
+		assert [len(p.get_drawings()) for p in pdf] == [3, 2, 2, 2, 2]
 	image = Image.new("RGBA", (20, 10), (0, 0, 0, 255))
 	buffer = io.BytesIO()
 	image.save(buffer, format="PNG")
