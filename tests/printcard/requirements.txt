@@ -1,0 +1,7 @@
+# Test-only baseline. Production keeps its existing PDF dependency versions.
+pytest>=8,<9
+pypdf==3.17.4
+WeasyPrint==59.0
+pydyf==0.6.0
+reportlab>=3.6,<6
+PyMuPDF==1.24.14

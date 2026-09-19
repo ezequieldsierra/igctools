@@ -85,7 +85,7 @@ jobs:
       - name: Setup
         run: |
           pip install frappe-bench
-          bench init --frappe-branch v15.120.1 --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+          bench init --frappe-branch v15.121.0 --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'"
           mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL collation_server = 'utf8mb4_unicode_ci'"
 
@@ -94,6 +94,7 @@ jobs:
         run: |
           bench get-app igctools $GITHUB_WORKSPACE
           bench setup requirements --dev
+          env/bin/pip install -r apps/igctools/tests/printcard/requirements.txt
           bench new-site --db-root-password root --admin-password admin test_site
           bench --site test_site install-app igctools
           bench build
@@ -108,5 +109,7 @@ jobs:
           bench --site test_site run-tests --app igctools
           bench --site test_site execute igctools.test_mcp_extended.run
           bench --site test_site execute igctools.test_exports.run
+          env/bin/python -m pytest apps/igctools/tests/printcard -q
+          bench --site test_site execute igctools.printcard.integration_checks.run
         env:
           TYPE: server

@@ -21,7 +21,26 @@ app_include_js = [
 # Frappe 15 has no extend_doctype_class; the existing Job Card subclass requires this hook.
 override_doctype_class = {  # nosemgrep: override-doctype-class
 	"Job Card": "igctools.overrides.job_card.JobCard",
+	"PrintCard": "igctools.printcard.controller.PrintCard",
 }
+
+# Keep the existing callers, including direct URLs from older Client Scripts.
+override_whitelisted_methods = {
+	"igcaribe.client.generate_pdf_for_printcard": "igctools.printcard.helper.generate_pdf_for_printcard",
+	"powerpro.controllers.printcard.generate_pdf_for_printcard": "igctools.printcard.helper.generate_pdf_for_printcard",
+	"powerpro.controllers.printcard.helper.generate_pdf_for_printcard": "igctools.printcard.helper.generate_pdf_for_printcard",
+	"powerpro.controllers.printcard.sign_pdf_with_base64": "igctools.printcard.helper.sign_pdf_with_base64",
+	"powerpro.controllers.printcard.helper.sign_pdf_with_base64": "igctools.printcard.helper.sign_pdf_with_base64",
+	"powerpro.controllers.printcard.get_printcard_list": "igctools.printcard.client.get_printcard_list",
+	"powerpro.controllers.printcard.client.get_printcard_list": "igctools.printcard.client.get_printcard_list",
+}
+
+permission_query_conditions = {
+	"PrintCard": "igctools.printcard.permissions.printcard_query_conditions",
+}
+
+before_migrate = ["igctools.printcard.migration.assert_source_compatibility"]
+after_migrate = ["igctools.printcard.migration.verify_activation"]
 
 # ------------------
 # Apps
