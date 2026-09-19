@@ -104,5 +104,7 @@ def status():
 		},
 		"schema_owner_transferred": False,
 		"powerpro_still_required": True,
-		"layers_enabled": False,
+		"layers_enabled": True,
+		"layer_mode": "single_page_with_recognized_layers",
+		"legacy_mode": "multi_page_or_no_recognized_layers",
 	}
