@@ -1,7 +1,0 @@
-# Standalone legacy baseline only; never install into a Frappe bench.
-# CI keeps the PDF dependencies declared by its pinned Frappe release.
-pytest>=8,<9
-pypdf==3.17.4
-WeasyPrint==59.0
-pydyf==0.6.0
-PyMuPDF==1.24.14
