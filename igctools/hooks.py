@@ -1,3 +1,5 @@
+from igctools.printcard.compatibility import runtime_hooks as _printcard_runtime_hooks
+
 app_name = "igctools"
 app_title = "IGCTools"
 app_publisher = "Ezequiel Sierra"
@@ -22,6 +24,14 @@ app_include_js = [
 override_doctype_class = {  # nosemgrep: override-doctype-class
 	"Job Card": "igctools.overrides.job_card.JobCard",
 }
+
+# Register the entire PrintCard runtime together, only for audited source files.
+# On mismatch the installed PowerPro hooks remain untouched, including old URLs.
+_printcard_controller, override_whitelisted_methods, permission_query_conditions = _printcard_runtime_hooks()
+override_doctype_class.update(_printcard_controller)
+
+before_migrate = ["igctools.printcard.migration.assert_source_compatibility"]
+after_migrate = ["igctools.printcard.migration.verify_activation"]
 
 # ------------------
 # Apps
