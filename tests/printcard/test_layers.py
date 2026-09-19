@@ -207,6 +207,12 @@ def test_layer_pages_pass_through_existing_canvas_and_signature(tmp_path):
 	with fitz.open(source.parent / "layer-signed.pdf") as pdf:
 		assert len(pdf) == 5
 		assert all(len(p.get_images()) == 1 and "2026-09-19" in p.get_text() for p in pdf)
+		assert all(
+			label in pdf[index].get_text()
+			for index, label in enumerate(
+				["TROQUEL & DIMENSIONES", "RELIEVE", "BARNIZ BRILLO", "BARNIZ MATTE"], start=1
+			)
+		)
 	assert pc.archivo == "/files/original.pdf"
 	assert pc.printcard_file_signed == "/files/layer-signed.pdf"
 	assert hashlib.sha256(source.read_bytes()).digest() == digest

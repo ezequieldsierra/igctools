@@ -252,11 +252,13 @@ def prepare_printcard_source(source):
 	writer = PdfWriter()
 	writer.add_page(first)
 	writer.add_outline_item(PAGE_GROUPS[0][0], 0)
+	page_labels = [None]
 	for label, selected in PAGE_GROUPS[1:]:
 		if not separator.names & selected:
 			continue
 		page = separator.variant(selected)
 		if _has_content(page):
+			page_labels.append(label)
 			if references := PAGE_REFERENCES.get(label):
 				# Draw reference lines last so solid varnish fills cannot obscure them.
 				page.merge_page(separator.variant(references))
@@ -266,4 +268,8 @@ def prepare_printcard_source(source):
 	buffer = BytesIO()
 	writer.write(buffer)
 	buffer.seek(0)
-	return PdfReader(buffer)
+	result = PdfReader(buffer)
+	for page, label in zip(result.pages, page_labels, strict=True):
+		# In-memory only: an ordinary input PDF cannot opt itself into labelling.
+		page.printcard_separation_label = label
+	return result

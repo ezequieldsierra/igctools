@@ -1,5 +1,5 @@
 # ruff: noqa: I001
-# Preserve the audited compositor; layer preparation is the explicit new behavior.
+# Preserve the audited placement; layer preparation and labels are explicit additions.
 # Copyright (c) 2024, Yefri Tavarez and Contributors
 # For license information, please see license.txt
 
@@ -12,6 +12,7 @@ from frappe.utils import flt
 from pypdf import PdfReader, PdfWriter, PageObject, Transformation
 from io import BytesIO
 from igctools.printcard.layers import prepare_printcard_source
+from igctools.printcard.page_labels import add_separation_label
 
 
 def render_pdf_on_template(pdf1_buffer, pdf2_path, canvas):
@@ -64,6 +65,7 @@ def render_pdf_on_template(pdf1_buffer, pdf2_path, canvas):
 		)  # Aplicar transformación con desplazamiento
 		pdf2_translated.add_transformation(transformation)
 		combined_page.merge_page(pdf2_translated)  # Combinar ambos
+		add_separation_label(combined_page, pdf2_page, top_margin, right_margin)
 
 		# Agregar la página combinada al escritor
 		writer.add_page(combined_page)
