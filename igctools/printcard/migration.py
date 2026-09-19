@@ -48,13 +48,15 @@ def assert_source_compatibility():
 			frappe.throw(f"PrintCard: campo incompatible para la migración: {name}.")
 	if "powerpro" not in frappe.get_installed_apps():
 		frappe.throw(
-			"PrintCard: esta fase requiere conservar PowerPro instalado y su definición del DocType."
+			frappe._(
+				"PrintCard: esta fase requiere conservar PowerPro instalado y su definición del DocType."
+			)
 		)
 	status = source_status()
 	differences = [f["path"] for f in status["files"] if not f["matches"]]
 	if not status["available"] or differences:
 		frappe.throw(
-			"PrintCard: PowerPro no coincide con la versión auditada; revisar antes de activar. "
+			frappe._("PrintCard: PowerPro no coincide con la versión auditada; revisar antes de activar. ")
 			+ ", ".join(differences)
 		)
 	# Import before accepting the deployment: the PDF dependencies must already work.
@@ -70,7 +72,7 @@ def verify_activation():
 
 	controller = get_controller("PrintCard")
 	if f"{controller.__module__}.{controller.__name__}" != CONTROLLER:
-		frappe.throw("PrintCard: otra app está sustituyendo el controlador de IGCTools.")
+		frappe.throw(frappe._("PrintCard: otra app está sustituyendo el controlador de IGCTools."))
 	for source, target in hooks.override_whitelisted_methods.items():
 		if frappe.override_whitelisted_method(source) != target:
 			frappe.throw(f"PrintCard: una ruta continúa usando otro motor: {source}.")

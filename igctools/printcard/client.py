@@ -6,10 +6,10 @@ import frappe
 
 
 @frappe.whitelist()
-def get_printcard_list(arte_id):
+def get_printcard_list(arte_id: str):
 	"""Fetches a list of PrintCard records matching the given arte_id (codigo_arte)."""
 	if not arte_id:
-		frappe.throw("Parameter 'arte_id' is required")
+		frappe.throw(frappe._("Parameter 'arte_id' is required"))
 
 	results = frappe.db.get_list(
 		"PrintCard",

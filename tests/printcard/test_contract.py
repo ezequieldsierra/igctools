@@ -22,6 +22,63 @@ def normalized(text):
 			"from igctools.printcard import signature_helper as signature_helper",
 		)
 	)
+
+	class ReviewedCompatibilityChanges(ast.NodeTransformer):
+		"""Canonicalize only the explicitly reviewed migration adjustments.
+
+		SQL still has the same expressions and clauses, but binds data separately.
+		Path confinement is verified independently against traversal and symlinks.
+		"""
+
+		def sql_parts(self, query):
+			parts, values = [], []
+			for value in query.values:
+				if isinstance(value, ast.Constant):
+					parts.append(value.value)
+				else:
+					assert value.format_spec is None and value.conversion in [-1, ord("r")]
+					parts.append("%s")
+					values.append(value.value)
+			return ast.Constant("".join(parts)), ast.Tuple(elts=values, ctx=ast.Load())
+
+		def visit_FunctionDef(self, node):
+			if node.name in ["generate_pdf_for_printcard", "sign_pdf_with_base64", "get_printcard_list"]:
+				for argument in node.args.args:
+					argument.annotation = None
+			if node.name == "set_version":
+				assignment = node.body[0]
+				if isinstance(assignment.value, ast.JoinedStr):
+					assignment.value, params = self.sql_parts(assignment.value)
+					for call in ast.walk(node):
+						if isinstance(call, ast.Call) and ast.unparse(call.func) == "frappe.db.sql":
+							call.args.append(params)
+			return self.generic_visit(node)
+
+		def visit_Call(self, node):
+			node = self.generic_visit(node)
+			name = ast.unparse(node.func)
+			if name == "frappe.db.sql" and isinstance(node.args[0], ast.JoinedStr):
+				query, params = self.sql_parts(node.args[0])
+				node.args = [query, params, *node.args[1:]]
+			if name == "frappe._" and len(node.args) == 1:
+				return node.args[0]
+			if name == "confined_file_path":
+				assert len(node.args) == 2 and ast.unparse(node.args[1]) == "files_folder"
+				return node.args[0]
+			return node
+
+		def visit_JoinedStr(self, node):
+			if all(isinstance(part, ast.Constant) for part in node.values):
+				return ast.Constant("".join(part.value for part in node.values))
+			return self.generic_visit(node)
+
+		def visit_ImportFrom(self, node):
+			if node.module == "igctools.printcard.file_safety":
+				assert [name.name for name in node.names] == ["confined_file_path"]
+				return None
+			return node
+
+	tree = ReviewedCompatibilityChanges().visit(tree)
 	# Ignore docstring indentation and trailing line whitespace removed by pre-commit.
 	for node in ast.walk(tree):
 		if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):

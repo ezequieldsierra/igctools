@@ -26,25 +26,27 @@ def field(name, kind="Data", **kwargs):
 
 def doctype(name, fields, child=False):
 	doc = frappe.get_doc(
-		dict(
-			doctype="DocType",
-			name=name,
-			module="IGCTools",
-			custom=1,
-			istable=int(child),
-			fields=fields,
-			permissions=[] if child else [dict(role="All", read=1, write=1, create=1, delete=1)],
-		)
+		doctype="DocType",
+		name=name,
+		module="IGCTools",
+		custom=1,
+		istable=int(child),
+		fields=fields,
+		permissions=[] if child else [dict(role="All", read=1, write=1, create=1, delete=1)],
 	)
 	doc.insert()
 	return doc
 
 
-def install_test_schema():
+def assert_disposable_site():
 	if not frappe.conf.get("allow_tests") or frappe.local.site != "test_site":
 		raise RuntimeError(
 			"This suite only runs on a disposable site named test_site with allow_tests enabled."
 		)
+
+
+def install_test_schema():
+	assert_disposable_site()
 	for name in [
 		"PrintCard",
 		"Arte",
@@ -135,6 +137,9 @@ def install_test_schema():
 		if entry["fieldtype"] == "Link":
 			entry["fieldtype"] = "Data"
 			entry.pop("options", None)
+		if entry["fieldname"] == "estado":
+			# The public controller also handles this intermediate state.
+			entry["options"] += "\nListo para Someter"
 		fields.append(entry)
 	fields.append(field("svg", "Code"))
 	pc = doctype("PrintCard", fields)
@@ -143,15 +148,16 @@ def install_test_schema():
 	frappe.clear_cache(doctype="PrintCard")
 	frappe.controllers.setdefault(frappe.local.site, {}).pop("PrintCard", None)
 	doctype("Project", [field("printcard"), field("svg_arte", "Code")])
-	frappe.db.commit()  # Disposable schema must exist for every test transaction.
+	# Disposable schema must exist before the lifecycle transaction.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	frappe.clear_cache()
 
 
 class TestPrintCardIntegration(unittest.TestCase):
 	@classmethod
 	def setUpClass(cls):
-		frappe.set_user("Administrator")
 		install_test_schema()
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser
 
 	def test_lifecycle_uses_existing_fields_and_routes(self):
 		from frappe.handler import execute_cmd
@@ -160,38 +166,34 @@ class TestPrintCardIntegration(unittest.TestCase):
 		self.assertEqual(get_controller("PrintCard").__module__, "igctools.printcard.controller")
 		migration.verify_activation()
 		arte = frappe.get_doc(
-			dict(
-				doctype="Arte",
-				estado="Borrador",
-				version_actual=1,
-				cambios=[dict(numero_version=1, tipo_de_cambio="Pendiente de Crear PrintCard")],
-			)
+			doctype="Arte",
+			estado="Borrador",
+			version_actual=1,
+			cambios=[dict(numero_version=1, tipo_de_cambio="Pendiente de Crear PrintCard")],
 		).insert()
 		product = frappe.get_doc(
-			dict(doctype="Producto del Cliente", nombre_arte="TEST ART", codigo="CODE-1")
+			doctype="Producto del Cliente", nombre_arte="TEST ART", codigo="CODE-1"
 		).insert()
 		frappe.get_doc(
-			dict(
-				doctype="PrintCard Canvas",
-				orientation="Landscape",
-				ancho_pdf=7,
-				alto_pdf=6,
-				ancho_specs=1,
-				margin_left=0.2,
-				margin_right=0.2,
-				margin_top=0.2,
-				margin_bottom=0.2,
-				codigo_html="<h3>PRINTCARD {{ doc.cliente }}</h3>",
-				codigo_css="body {font-size:10pt;}",
-				signature_x_position=0.1,
-				signature_y_position=0.8,
-				signature_width=1,
-				signature_height=0.3,
-				date_x_position=0,
-				date_y_position=1,
-				date_font_color="#000000",
-				font_size=8,
-			)
+			doctype="PrintCard Canvas",
+			orientation="Landscape",
+			ancho_pdf=7,
+			alto_pdf=6,
+			ancho_specs=1,
+			margin_left=0.2,
+			margin_right=0.2,
+			margin_top=0.2,
+			margin_bottom=0.2,
+			codigo_html="<h3>PRINTCARD {{ doc.cliente }}</h3>",
+			codigo_css="body {font-size:10pt;}",
+			signature_x_position=0.1,
+			signature_y_position=0.8,
+			signature_width=1,
+			signature_height=0.3,
+			date_x_position=0,
+			date_y_position=1,
+			date_font_color="#000000",
+			font_size=8,
 		).insert()
 		original = fitz.open()
 		for label in ["FIRST ART PAGE", "SECOND ART PAGE"]:
@@ -200,21 +202,19 @@ class TestPrintCardIntegration(unittest.TestCase):
 		payload = original.tobytes()
 		original.close()
 		file = frappe.get_doc(
-			dict(doctype="File", file_name="printcard-test-source.pdf", content=payload, is_private=1)
+			doctype="File", file_name="printcard-test-source.pdf", content=payload, is_private=1
 		).insert()
 		pc = frappe.get_doc(
-			dict(
-				doctype="PrintCard",
-				cliente="TEST CUSTOMER",
-				producto="SKU1",
-				nombre_arte=product.nombre_arte,
-				codigo_arte=arte.name,
-				version_arte_interna=1,
-				version_arte_cliente="V1",
-				estado="Borrador",
-				archivo=file.file_url,
-				usuarios_asignados=[],
-			)
+			doctype="PrintCard",
+			cliente="TEST CUSTOMER",
+			producto="SKU1",
+			nombre_arte=product.nombre_arte,
+			codigo_arte=arte.name,
+			version_arte_interna=1,
+			version_arte_cliente="V1",
+			estado="Borrador",
+			archivo=file.file_url,
+			usuarios_asignados=[],
 		).insert()
 		self.assertEqual(pc.version, 1)
 		self.assertEqual(pc.archivo, file.file_url)
@@ -233,7 +233,7 @@ class TestPrintCardIntegration(unittest.TestCase):
 		with fitz.open(helper.get_file_path(pc.printcard_file)) as pdf:
 			self.assertEqual(len(pdf), 2)
 			self.assertIn("FIRST ART PAGE", pdf[0].get_text())
-		project = frappe.get_doc(dict(doctype="Project", printcard=pc.name)).insert()
+		project = frappe.get_doc(doctype="Project", printcard=pc.name).insert()
 		self.assertEqual(project.svg_arte, pc.svg)
 		manual = pc.generate_printcard_pdf_on_demand()
 		self.assertEqual(manual["printcard_file"], pc.printcard_file)
@@ -269,33 +269,32 @@ class TestPrintCardIntegration(unittest.TestCase):
 		self.assertEqual(frappe.get_doc("File", file.name).get_content(), payload)
 		# Read filtering remains assigned-user based for Website Users.
 		user = frappe.get_doc(
-			dict(
-				doctype="User",
-				email="printcard-qa@example.invalid",
-				first_name="QA",
-				user_type="Website User",
-				send_welcome_email=0,
-			)
+			doctype="User",
+			email="printcard-qa@example.invalid",
+			first_name="QA",
+			user_type="Website User",
+			send_welcome_email=0,
 		).insert()
-		frappe.set_user(user.name)
+		frappe.set_user(user.name)  # nosemgrep: frappe-setuser -- synthetic user in guarded disposable site
 		self.assertEqual(frappe.get_list("PrintCard", pluck="name"), [])
 		with self.assertRaises(frappe.PermissionError):
 			pc.generate_printcard_pdf_on_demand()
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore test runner identity
 		pc.append("usuarios_asignados", {"user": user.name})
 		pc.save()
-		frappe.set_user(user.name)
+		frappe.set_user(user.name)  # nosemgrep: frappe-setuser -- synthetic user in guarded disposable site
 		self.assertIn(pc.name, frappe.get_list("PrintCard", pluck="name"))
-		frappe.set_user("Administrator")
+		frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore test runner identity
 
 
 def run():
+	assert_disposable_site()
 	# Nothing can send mail or execute a background task outside this test process.
 	with patch.object(frappe, "sendmail"), patch.object(frappe, "enqueue"):
 		result = unittest.TextTestRunner(verbosity=2).run(
 			unittest.defaultTestLoader.loadTestsFromTestCase(TestPrintCardIntegration)
 		)
-	frappe.set_user("Administrator")
+	frappe.set_user("Administrator")  # nosemgrep: frappe-setuser -- restore test runner identity
 	frappe.db.rollback()
 	if not result.wasSuccessful():
 		raise RuntimeError("PrintCard integration failed; do not activate the migration.")

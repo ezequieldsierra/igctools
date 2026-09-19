@@ -1,4 +1,4 @@
-# ruff: noqa: I001, B009, B010, F841, F541
+# ruff: noqa: I001, B009, B010, F841
 # Preserve the audited behavior in phase one; compare the AST against origin.json.
 # Copyright (c) 2024, Yefri Tavarez and Contributors
 # For license information, please see license.txt
@@ -143,14 +143,14 @@ class PrintCard(Document):
 		self.save_arte()
 
 	def set_version(self):
-		query = f"""
+		query = """
             Select Max(version)
             From `tabPrintCard`
-            Where codigo_arte={self.codigo_arte!r}
-            And version_arte_interna = {self.version_arte_interna}
+            Where codigo_arte=%s
+            And version_arte_interna = %s
         """
 
-		result = frappe.db.sql(query)
+		result = frappe.db.sql(query, (self.codigo_arte, self.version_arte_interna))
 
 		self.version = result[0][0] or 0
 
@@ -266,7 +266,8 @@ class PrintCard(Document):
 				# this only matters if the PrintCard being deleted is the
 				# last one and at the same time is approved
 				if self.estado == "Aprobado":
-					res = frappe.db.sql(f"""
+					res = frappe.db.sql(
+						"""
                         Select
                             Max(
                                 Concat_Ws(
@@ -278,10 +279,15 @@ class PrintCard(Document):
                         From
                             `tabPrintCard`
                         Where
-                            codigo_arte = {self.codigo_arte!r}
-                            And name != {self.name!r}
+                            codigo_arte = %s
+                            And name != %s
                             And estado = 'Aprobado'
-                    """)
+                    """,
+						(
+							self.codigo_arte,
+							self.name,
+						),
+					)
 
 					if res:
 						arte.ultima_version_aprobada = res[0][0]
@@ -297,17 +303,21 @@ class PrintCard(Document):
 				# """, (self.codigo_arte, self.name), as_dict=True)
 
 				second_latest_printcard = frappe.db.sql(
-					f"""
+					"""
                     Select
                         name, estado
                     From
                         `tabPrintCard`
                     Where
-                        codigo_arte = {self.codigo_arte!r}
-                        And name != {self.name!r}
+                        codigo_arte = %s
+                        And name != %s
                     Order By
                         Concat_Ws(".", IfNull(version_arte_interna, 0), IfNull(version, 0)) Desc
                     """,
+					(
+						self.codigo_arte,
+						self.name,
+					),
 					as_dict=True,
 				)
 
@@ -362,7 +372,8 @@ class PrintCard(Document):
 		else:
 			# Si no hay registros relacionados, mostrar alerta
 			frappe.msgprint(
-				"No se encontró ningún registro asociado en la Tabla de Cambios del Arte", alert=True
+				frappe._("No se encontró ningún registro asociado en la Tabla de Cambios del Arte"),
+				alert=True,
 			)
 
 		# Validar y actualizar estado según condiciones adicionales
@@ -392,7 +403,8 @@ class PrintCard(Document):
 					row.db_update()
 			else:
 				frappe.msgprint(
-					"No se encontró ningún registro asociado en la Tabla de Cambios del Arte", alert=True
+					frappe._("No se encontró ningún registro asociado en la Tabla de Cambios del Arte"),
+					alert=True,
 				)
 
 	def update_change_log(self):
@@ -427,8 +439,10 @@ class PrintCard(Document):
 
 		if self.estado != "Borrador":
 			frappe.msgprint(
-				"Ehhh....! Un PrintCard nuevo que no esta en Borrador."
-				"Este PrintCard sera marcado como Borrador.",
+				frappe._(
+					"Ehhh....! Un PrintCard nuevo que no esta en Borrador."
+					"Este PrintCard sera marcado como Borrador."
+				),
 				alert=True,
 			)
 			self.db_set("estado", "Borrador")
@@ -525,7 +539,7 @@ class PrintCard(Document):
 		         If no version is found, returns "0.0".
 		"""
 		result = frappe.db.sql(
-			f"""
+			"""
             Select
                 Max(
                     Concat_Ws(
@@ -537,8 +551,9 @@ class PrintCard(Document):
             From
                 `tabPrintCard`
             Where
-                codigo_arte = {related_arte!r}
-            """
+                codigo_arte = %s
+            """,
+			(related_arte,),
 		)
 
 		if result:
@@ -552,7 +567,7 @@ class PrintCard(Document):
 
 		if not allowed_user:
 			frappe.throw(
-				"No tiene permisos para generar el PDF del PrintCard.",
+				frappe._("No tiene permisos para generar el PDF del PrintCard."),
 				frappe.PermissionError,
 			)
 
@@ -560,7 +575,7 @@ class PrintCard(Document):
 
 		if not pdf_path:
 			frappe.throw(
-				"No se pudo generar el PDF del PrintCard.",
+				frappe._("No se pudo generar el PDF del PrintCard."),
 			)
 
 		self.db_set("printcard_file", pdf_path)
@@ -707,7 +722,7 @@ class PrintCard(Document):
 				self.printcard_file = pdf_path
 
 				frappe.msgprint(
-					f"El archivo PDF del PrintCard ha sido generado satisfactoriamente.",
+					frappe._("El archivo PDF del PrintCard ha sido generado satisfactoriamente."),
 					alert=True,
 				)
 

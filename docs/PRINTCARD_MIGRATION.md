@@ -17,10 +17,23 @@ PowerPro. Los Client Scripts, Server Scripts, Web Forms, campos y registros del
 sitio se mantienen. No desinstalar PowerPro ni cambiar propietarios de módulos.
 Los demás módulos de PowerPro están fuera de este traslado.
 
-El motor nuevo no hereda ni importa el controlador anterior. Su código de negocio
-es el mismo que el origen auditado, salvo imports internos, formato y cabeceras.
-Esto conserva también limitaciones existentes; no es una revisión de seguridad
-ni una refactorización de la lógica funcional.
+El motor nuevo no hereda ni importa el controlador anterior. Conserva la lógica
+funcional del origen auditado. Además de imports, formato y cabeceras, incluye
+ajustes concretos exigidos al revisar el código: cuatro consultas SQL usan
+parámetros, las rutas PDF deben quedar dentro del directorio de archivos del
+sitio, las API tienen tipos de argumentos y los textos constantes pasan por la
+traducción de Frappe. Las pruebas AST permiten exclusivamente esos ajustes
+documentados; el resto de la lógica se compara con el origen. Las rutas con
+recorridos fuera del directorio y los enlaces simbólicos externos se rechazan;
+los textos pueden aparecer traducidos según el idioma del usuario.
+
+Esto conserva otras limitaciones existentes; no constituye una revisión completa
+de seguridad ni una refactorización funcional. Los Canvas siguen siendo plantillas
+Jinja administradas por usuarios de confianza, renderizadas en el sandbox de
+Frappe. Verificar los permisos de escritura de Canvas en la copia privada es una
+condición de activación. Las excepciones puntuales de Semgrep documentan ese uso
+intencional, el acceso a archivos ya confinado y el cambio de usuario/commit
+necesario en el sitio desechable de pruebas; no se desactiva el escáner.
 
 No se activan aún las páginas por capas. Eso será un cambio separado: primera
 página ARTE + TROQUEL + PRESERVADO; páginas adicionales de TROQUEL, RELIEVE,
@@ -69,6 +82,7 @@ conjunto permitido. No se deshabilitan en bloque scripts ni eventos de PowerPro.
 | Arte | Versiones, historial, reemplazo, campos aprobados y eliminación final |
 | Acceso | Asignaciones, consulta Website User, regeneración administrativa |
 | Activación | Rechazo de fuente/metadata incompatibles y rutas/controlador efectivos |
+| Rutas y SQL | Conservación de rutas válidas, rechazo de traversal/symlinks externos y valores SQL separados |
 | Frappe real | Suite explícita con MariaDB y metadatos representativos derivados del código público |
 
 Ejecución aislada: `python -m pytest tests/printcard -q`.

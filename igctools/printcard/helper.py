@@ -20,12 +20,15 @@ from frappe.utils import flt
 
 from igctools.printcard import pdf_manipulator as pdf_manager
 from igctools.printcard import signature_helper as signature_helper
+from igctools.printcard.file_safety import confined_file_path
 
 
 @frappe.whitelist()
-def generate_pdf_for_printcard(canvas=None, printcard=None, pdf_path=None):
+def generate_pdf_for_printcard(
+	canvas: str | None = None, printcard: str | None = None, pdf_path: str | bool | None = None
+):
 	if not printcard:
-		frappe.throw("You must specify a PrintCard to generate the PDF")
+		frappe.throw(frappe._("You must specify a PrintCard to generate the PDF"))
 
 	pc = get_princard(printcard)
 
@@ -61,7 +64,9 @@ def generate_pdf_for_printcard(canvas=None, printcard=None, pdf_path=None):
 
 	cv = get_canvas(canvas)
 
-	html = frappe.render_template(
+	# Stored Canvas templates are authored by trusted site maintainers; Frappe renders in its sandbox.
+	# The private site acceptance must verify who can write PrintCard Canvas.
+	html = frappe.render_template(  # nosemgrep: frappe-ssti
 		f"""
 		<div>
 			{cv.codigo_html}
@@ -104,7 +109,8 @@ def generate_pdf_for_printcard(canvas=None, printcard=None, pdf_path=None):
 
 		path = f"/files/{unique_filename}"
 
-		with open(get_file_path(path), "wb") as f:
+		# get_file_path rejects paths outside the site's files directory, including symlinks.
+		with open(get_file_path(path), "wb") as f:  # nosemgrep: frappe-security-file-traversal
 			f.write(output.getvalue())
 
 		return path
@@ -125,7 +131,7 @@ def get_file_path(filename):
 	else:
 		filepath = filename.replace("/files/", "")
 
-	return f"{files_folder}/{filepath}"
+	return confined_file_path(f"{files_folder}/{filepath}", files_folder)
 
 
 def get_ink_color(ink_color_id):
@@ -216,7 +222,7 @@ def get_best_canvas(pdf_width, pdf_height, raise_if_empty=False) -> str:
 
 	if not canvas_list:
 		if raise_if_empty:
-			frappe.throw("No PrintCard Canvas documents found.")
+			frappe.throw(frappe._("No PrintCard Canvas documents found."))
 		return None
 
 	minimum_canvas_margin = get_minimum_canvas_margin()
@@ -230,7 +236,7 @@ def get_best_canvas(pdf_width, pdf_height, raise_if_empty=False) -> str:
 
 
 @frappe.whitelist()
-def sign_pdf_with_base64(printcard_id) -> bool:
+def sign_pdf_with_base64(printcard_id: str) -> bool:
 	"""Sign the PDF of a PrintCard with a Base64-encoded signature."""
 	frappe.enqueue(
 		_sign_pdf_with_base64,
@@ -286,7 +292,7 @@ def _sign_pdf_with_base64(printcard_id) -> bool:
 			alert=True,
 		)
 	else:
-		frappe.throw("Ha ocurrido un error al firmar el PrintCard. Por favor, intente de nuevo.")
+		frappe.throw(frappe._("Ha ocurrido un error al firmar el PrintCard. Por favor, intente de nuevo."))
 
 
 def get_princard(name: str) -> "document.Document":
@@ -296,7 +302,7 @@ def get_princard(name: str) -> "document.Document":
 
 def get_canvas(name: str) -> "document.Document":
 	if not name:
-		frappe.throw("You must specify a PrintCard Canvas to get.")
+		frappe.throw(frappe._("You must specify a PrintCard Canvas to get."))
 
 	doctype = "PrintCard Canvas"
 	return frappe.get_doc(doctype, name)
