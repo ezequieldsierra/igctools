@@ -14,6 +14,8 @@ from unittest.mock import patch
 import fitz
 import frappe
 from PIL import Image, ImageDraw
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 from igctools.printcard import helper, migration
 
@@ -246,7 +248,16 @@ class TestPrintCardIntegration(unittest.TestCase):
 		self.assertEqual(manual["printcard_file"], pc.printcard_file)
 		frappe.local.form_dict = frappe._dict(printcard=pc.name)
 		frappe.local.response = frappe._dict()
-		execute_cmd("igcaribe.client.generate_pdf_for_printcard")
+		frappe.local.request = Request(
+			EnvironBuilder(
+				method="GET", path="/api/method/igcaribe.client.generate_pdf_for_printcard"
+			).get_environ()
+		)
+		try:
+			execute_cmd("igcaribe.client.generate_pdf_for_printcard")
+		finally:
+			frappe.local.request.close()
+			del frappe.local.request
 		self.assertEqual(frappe.local.response.type, "pdf")
 		with fitz.open(stream=frappe.local.response.filecontent, filetype="pdf") as pdf:
 			self.assertEqual(len(pdf), 2)
