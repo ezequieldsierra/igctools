@@ -57,6 +57,11 @@ def normalized(text):
 		def visit_Call(self, node):
 			node = self.generic_visit(node)
 			name = ast.unparse(node.func)
+			if name == "prepare_printcard_source":
+				# The sole intentional page-generation change; covered in test_layers.py.
+				assert len(node.args) == 1 and ast.unparse(node.args[0]) == "pdf2_path"
+				assert not node.keywords
+				node.func = ast.Name(id="PdfReader", ctx=ast.Load())
 			if name == "frappe.db.sql" and isinstance(node.args[0], ast.JoinedStr):
 				query, params = self.sql_parts(node.args[0])
 				node.args = [query, params, *node.args[1:]]
@@ -73,6 +78,9 @@ def normalized(text):
 			return self.generic_visit(node)
 
 		def visit_ImportFrom(self, node):
+			if node.module == "igctools.printcard.layers":
+				assert [name.name for name in node.names] == ["prepare_printcard_source"]
+				return None
 			if node.module == "igctools.printcard.file_safety":
 				assert [name.name for name in node.names] == ["confined_file_path"]
 				return None

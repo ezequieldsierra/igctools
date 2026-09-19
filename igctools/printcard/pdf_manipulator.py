@@ -1,5 +1,5 @@
 # ruff: noqa: I001
-# Preserve the audited behavior in phase one; compare the AST against origin.json.
+# Preserve the audited compositor; layer preparation is the explicit new behavior.
 # Copyright (c) 2024, Yefri Tavarez and Contributors
 # For license information, please see license.txt
 
@@ -11,6 +11,7 @@ from frappe.utils import flt
 
 from pypdf import PdfReader, PdfWriter, PageObject, Transformation
 from io import BytesIO
+from igctools.printcard.layers import prepare_printcard_source
 
 
 def render_pdf_on_template(pdf1_buffer, pdf2_path, canvas):
@@ -21,7 +22,7 @@ def render_pdf_on_template(pdf1_buffer, pdf2_path, canvas):
 	pdf1_height = float(pdf1_page.mediabox.height)  # En puntos
 
 	# Leer PDF2 (contenido a sobreponer) desde el archivo
-	pdf2 = PdfReader(pdf2_path)
+	pdf2 = prepare_printcard_source(pdf2_path)
 
 	# Definir márgenes en pulgadas y convertirlos a puntos
 	left_margin = flt(canvas.margin_left) * 72

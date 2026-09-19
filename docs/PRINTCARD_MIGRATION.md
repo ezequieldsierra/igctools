@@ -7,11 +7,11 @@ listado y filtro de permisos de PrintCard a IGCTools. Conserva los tres campos:
 
 | Campo | Función conservada |
 | --- | --- |
-| `archivo` | PDF original; no se sustituye ni se separa por capas |
-| `printcard_file` | PDF generado con Canvas, una hoja por página del original |
+| `archivo` | PDF original intacto; la separación se hace en memoria |
+| `printcard_file` | PDF con Canvas: separaciones por capas o páginas originales según el archivo |
 | `printcard_file_signed` | PDF generado con firma y fecha en sus páginas |
 
-**No representa todavía independencia completa de PowerPro.** La definición
+**PowerPro permanece instalado por diseño.** La definición
 estándar del DocType, sus dependencias y su botón nativo siguen suministrados por
 PowerPro. Los Client Scripts, Server Scripts, Web Forms, campos y registros del
 sitio se mantienen. No desinstalar PowerPro ni cambiar propietarios de módulos.
@@ -22,25 +22,58 @@ funcional del origen auditado. Además de imports, formato y cabeceras, incluye
 ajustes concretos exigidos al revisar el código: cuatro consultas SQL usan
 parámetros, las rutas PDF deben quedar dentro del directorio de archivos del
 sitio, las API tienen tipos de argumentos y los textos constantes pasan por la
-traducción de Frappe. Las pruebas AST permiten exclusivamente esos ajustes
-documentados; el resto de la lógica se compara con el origen. Las rutas con
+traducción de Frappe. Las pruebas AST permiten esos ajustes y la nueva llamada de preparación por
+capas; el resto de la lógica se compara con el origen. Las rutas con
 recorridos fuera del directorio y los enlaces simbólicos externos se rechazan;
 los textos pueden aparecer traducidos según el idioma del usuario.
 
 Esto conserva otras limitaciones existentes; no constituye una revisión completa
 de seguridad ni una refactorización funcional. Los Canvas siguen siendo plantillas
 Jinja administradas por usuarios de confianza, renderizadas en el sandbox de
-Frappe. Verificar los permisos de escritura de Canvas en la copia privada es una
+Frappe. Verificar los permisos de escritura de Canvas en la configuración del sitio es una
 condición de activación. Las excepciones puntuales de Semgrep documentan ese uso
 intencional, el acceso a archivos ya confinado y el cambio de usuario/commit
 necesario en el sitio desechable de pruebas; no se desactiva el escáner.
 
-No se activan aún las páginas por capas. Eso será un cambio separado: primera
-página ARTE + TROQUEL + PRESERVADO; páginas adicionales de TROQUEL, RELIEVE,
-ESTAMPADO, BARNIZ BRILLO y BARNIZ MATTE sólo cuando tengan contenido, incluidos
-subgrupos. DIMENSIONES no participa. Se necesita un PDF real con grupos de capas
-para validar esa fase, porque una captura de Illustrator no prueba cómo están
-representados en el PDF exportado.
+## Separación por capas
+
+Para un PDF de **una página** en `archivo` con grupos de producción reconocibles,
+`layers.py` prepara estas páginas antes de pasarlas al compositor Canvas existente:
+
+| Orden | Contenido | Condición |
+| --- | --- | --- |
+| 1 | ARTE + TROQUEL + PRESERVADO | Siempre en el modo por capas |
+| 2 | TROQUEL | Sólo si contiene elementos dibujados |
+| 3 | RELIEVE | Sólo si contiene elementos dibujados |
+| 4 | ESTAMPADO | Sólo si contiene elementos dibujados |
+| 5 | BARNIZ BRILLO | Sólo si contiene elementos dibujados |
+| 6 | BARNIZ MATTE | Sólo si contiene elementos dibujados |
+
+Las páginas ausentes se omiten y la numeración queda consecutiva. DIMENSIONES y
+los elementos sin un grupo de producción quedan fuera. Los subgrupos pertenecen
+a su grupo principal. Se aceptan nombres sin distinción de mayúsculas y prefijos
+como `1. TROQUEL`. Una capa sólo con estado gráfico o recorte no produce una hoja.
+
+Soporta OCG estándar e Illustrator `/Layer`, incluidos los streams
+`/AltAI8 /HiddenLayer`: oculto no significa vacío. Los recursos propios de cada
+capa oculta se conservan dentro de Form XObjects para evitar colisiones de fuentes
+y colores. La salida conserva trazados vectoriales, imágenes, cajas y escala;
+no convierte el arte a una imagen. La firma se aplica al PDF generado completo.
+
+Los PDFs de varias páginas o sin grupos de producción identificables conservan
+el recorrido anterior. El archivo original nunca se escribe. No se reprocesan
+PrintCards históricos automáticamente. Un PDF aplanado no permite recuperar capas
+perdidas. Las condiciones OCG complejas (`OCMD`), capas mal cerradas y anotaciones
+en un documento reconocido por capas se rechazan antes de guardar una salida
+parcial. La separación es visual, no una herramienta de redacción de información:
+puede conservar texto no visible para mantener sus posiciones PDF.
+
+Se probó privadamente el único PDF proporcionado por el usuario: una página de
+entrada y cinco salidas (composición, TROQUEL, RELIEVE, BARNIZ BRILLO, BARNIZ MATTE).
+ESTAMPADO no existe en esa muestra. La composición coincide píxel por píxel con
+el original; Canvas y firma de prueba cubren las cinco páginas. Los bytes del
+original permanecen iguales. El PDF, los renderizados y los datos del cliente
+no se publican en este repositorio.
 
 ## Origen y compatibilidad
 
@@ -83,6 +116,7 @@ conjunto permitido. No se deshabilitan en bloque scripts ni eventos de PowerPro.
 | --- | --- |
 | Métodos originales del controlador y auxiliares | Comparación AST de los seis módulos contra el origen con hash |
 | Generación y Canvas | PDF vectorial de dos páginas, Canvas horizontal y vertical |
+| Capas | Orden, vacías, ocultas, OCG, subgrupos, recursos locales, Canvas y firma en cinco hojas |
 | Resultado PDF | Igualdad de páginas, medidas, texto, trazados y raster de ambos motores |
 | Firma | Imagen y fecha en cada página; comparación raster del resultado firmado |
 | Original | Mismos bytes y misma referencia `archivo` después de generar y firmar |
@@ -112,36 +146,47 @@ Un resultado verde no permite prometer ausencia absoluta de regresiones.
 **El código cambia los hooks al desplegarse; no tiene interruptor de activación.**
 `before_migrate` detecta incompatibilidades, pero no revierte un despliegue ni
 impide que procesos ya reiniciados carguen el código nuevo. Por eso debe validarse
-primero en una copia del sitio y mantenerse mantenimiento durante el cambio.
+primero con una prueba acotada y mantenerse mantenimiento durante el cambio.
 No basta con publicar esta rama en un bench que atiende tráfico.
 
-1. Obtener backup verificable de base de datos, archivos públicos y privados;
-   registrar commits de las apps, versiones PDF y trabajos pendientes de firma.
-2. Restaurar una copia aislada con las mismas apps, orden de instalación,
-   bibliotecas, scripts, permisos, Canvas y archivos. Deshabilitar correos,
-   webhooks e integraciones salientes en esa copia antes de probarla.
-3. Desplegar esta revisión sólo en la copia y ejecutar:
+**No se exige una copia completa del sitio ni un backup de muchos gigas para
+esta prueba.** El alcance no cambia esquemas, propietarios ni registros históricos.
+Se conserva la política normal de respaldo del proveedor, sin exigir descargar
+adjuntos históricos para validar el motor.
+
+1. Registrar el commit anterior de IGCTools, los hashes instalados de PowerPro,
+   las versiones PDF y los trabajos pendientes de firma. Revisar de forma sólo
+   lectura el esquema y hooks efectivos.
+2. Preparar una prueba privada mínima con la configuración relevante de PrintCard:
+   Canvas usado, ajustes, campos y permisos/scripts relacionados. Usar únicamente
+   el PDF de muestra del usuario y registros artificiales necesarios. No copiar
+   todos los adjuntos ni los registros históricos. Capturar correos y tareas para
+   impedir envíos reales en la prueba.
+3. En ese entorno, comprobar compatibilidad y activación:
 
    ```sh
-   bench --site COPIA execute igctools.printcard.migration.assert_source_compatibility
-   bench --site COPIA migrate
-   bench --site COPIA execute igctools.printcard.migration.status
+   bench --site PRUEBA execute igctools.printcard.migration.assert_source_compatibility
+   bench --site PRUEBA migrate
+   bench --site PRUEBA execute igctools.printcard.migration.status
    ```
 
    Deben coincidir los seis hashes; controlador IGCTools, siete rutas IGCTools y
    paquetes PDF presentes. Si no coincide el origen instalado, auditar ese código
    y adaptar la migración; no omitir el control ni modificar hashes para pasar.
-4. Repetir en la copia: crear/editar/enviar, previsualizar, regenerar, asignar y
-   retirar aprobadores, aprobar/firmar, rechazar, crear versión, reemplazar y
-   borrar última versión. Comprobar portal, SVG/Project, notas y notificaciones
-   con entrega capturada. Abrir adjuntos privados con cada rol real. Comparar
-   todos los Canvas activos y al menos un PrintCard histórico por flujo usado.
-5. Sólo con esa aceptación, preparar ventana de mantenimiento de producción,
-   completar trabajos pendientes o aislar sus workers y bloquear nuevas
-   escrituras. Desplegar el commit validado, ejecutar `migrate`, reiniciar
-   servicios y verificar `status`. Mantener mantenimiento si cualquier paso falla.
-6. Hacer las comprobaciones acordadas y reabrir el sitio; observar errores de
-   firma/PDF, colas, permisos y referencias de archivos.
+4. Con la muestra, revisar composición, páginas opcionales, Canvas, previsualización,
+   regeneración y firma. Verificar los scripts privados, portal y roles de los
+   flujos usados. Las pruebas automatizadas ya cubren el ciclo de vida general;
+   la comprobación privada se concentra en la configuración propia del sitio.
+   No probar sobre un registro histórico: generar puede escribir PDFs aunque una
+   llamada de consola no haga commit en la base de datos.
+5. Preparar una ventana de mantenimiento de producción, completar trabajos
+   pendientes o aislar sus workers y bloquear nuevas escrituras. Desplegar el
+   commit validado, ejecutar `migrate`, reiniciar servicios y verificar `status`.
+   Mantener mantenimiento si cualquier paso falla. No cambiar otras apps ni
+   actualizar bibliotecas PDF como parte del despliegue.
+6. Probar un registro controlado con la misma muestra y reabrir el sitio. Si la
+   prueba reemplaza algún valor o archivo, conservar sólo esos valores/archivos
+   para su reversión. Observar errores de PDF/firma, colas y permisos.
 
 La función `status` es de lectura y requiere System Manager. No copia registros,
 no migra propietarios de DocTypes y no modifica scripts ni adjuntos.
@@ -158,14 +203,14 @@ Volver al commit anterior mediante el mecanismo normal de despliegue, limpiar
 caché y reiniciar web/workers. Verificar el controlador PowerPro y sus rutas,
 probar generación/firmado y reabrir. Esta fase no cambia el esquema ni el nombre
 de los campos: los PDFs y registros producidos siguen usando los mismos campos.
-Una restauración completa sólo procede si la validación identifica corrupción;
-debe reconciliar las escrituras posteriores al backup para no perder trabajo.
+La reversión normal de este cambio es de código. No requiere restaurar toda la
+base de datos o todos los adjuntos; restaurar solamente los valores o archivos
+afectados por la prueba controlada, si los hubiera.
 
 ## Condiciones pendientes antes de producción
 
 - Comparar el origen instalado de PowerPro con los hashes auditados.
-- Ejecutar la aceptación en una copia fiel del sitio de IGCARIBE.
+- Completar la comprobación acotada de configuración, scripts y permisos privados.
 - Comprobar dependencias PDF reales y cada Canvas activo.
-- Confirmar restauración y reversión con las colas de firma contempladas.
-- Planificar por separado la transferencia de propiedad de DocTypes si se desea
-  retirar PowerPro; requiere auditar también sus dependencias ajenas a PrintCard.
+- Confirmar reversión de código y tratamiento de las colas de firma.
+- Mantener PowerPro instalado: no se transfiere propiedad de DocTypes.
