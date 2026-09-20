@@ -42,15 +42,16 @@ def add_separation_label(page, source_page, top_margin, right_margin):
 	text_height = (font.ascender - font.descender) * font_size
 	y = (top_margin - text_height) / 2 + font.ascender * font_size
 	navy = (25 / 255, 56 / 255, 99 / 255)
+	white = (1, 1, 1)
 	with fitz.open() as overlay:
 		target = overlay.new_page(width=width, height=height)
 		target.draw_rect(
 			fitz.Rect(left, top, right, top + badge_height),
 			radius=0.25,
-			color=(210 / 255, 221 / 255, 235 / 255),
-			fill=(238 / 255, 243 / 255, 250 / 255),
+			color=navy,
+			fill=navy,
 			width=min(0.4, top_margin * 0.02),
 		)
-		target.draw_circle((left + padding, top_margin / 2), font_size * 0.15, color=None, fill=navy)
-		target.insert_text((x, y), label, fontname="hebo", fontsize=font_size, color=navy)
+		target.draw_circle((left + padding, top_margin / 2), font_size * 0.15, color=None, fill=white)
+		target.insert_text((x, y), label, fontname="hebo", fontsize=font_size, color=white)
 		page.merge_page(PdfReader(BytesIO(overlay.tobytes())).pages[0])
