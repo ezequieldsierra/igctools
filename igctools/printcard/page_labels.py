@@ -6,6 +6,7 @@ import fitz
 from pypdf import PdfReader
 
 LABELS = {
+	"ARTE + TROQUEL + PRESERVADO": "ARTE & TROQUEL",
 	"TROQUEL": "TROQUEL & DIMENSIONES",
 	"RELIEVE": "RELIEVE",
 	"ESTAMPADO": "ESTAMPADO",
@@ -25,17 +26,31 @@ def add_separation_label(page, source_page, top_margin, right_margin):
 		return
 	width, height = float(page.mediabox.width), float(page.mediabox.height)
 	font = fitz.Font("hebo")
-	# Ten physical points stay discreet and legible even on the largest sheets.
-	font_size = min(10, top_margin * 0.75 / (font.ascender - font.descender))
+	# A compact, softly rounded badge stays entirely inside the existing margin.
+	badge_height = min(18, top_margin * 0.86)
+	font_size = min(9.5, badge_height * 0.82 / (font.ascender - font.descender))
+	padding = font_size
+	leading = font_size * 2
 	text_width = font.text_length(label, fontsize=font_size)
-	if text_width > width - max(0, right_margin):
+	badge_width = leading + text_width + padding
+	if badge_width > width - max(0, right_margin):
 		return
-	x = width - max(0, right_margin) - text_width
+	right = width - max(0, right_margin)
+	left = right - badge_width
+	top = (top_margin - badge_height) / 2
+	x = left + leading
 	text_height = (font.ascender - font.descender) * font_size
 	y = (top_margin - text_height) / 2 + font.ascender * font_size
+	navy = (25 / 255, 56 / 255, 99 / 255)
 	with fitz.open() as overlay:
 		target = overlay.new_page(width=width, height=height)
-		target.insert_text(
-			(x, y), label, fontname="hebo", fontsize=font_size, color=(20 / 255, 28 / 255, 55 / 255)
+		target.draw_rect(
+			fitz.Rect(left, top, right, top + badge_height),
+			radius=0.25,
+			color=(210 / 255, 221 / 255, 235 / 255),
+			fill=(238 / 255, 243 / 255, 250 / 255),
+			width=min(0.4, top_margin * 0.02),
 		)
+		target.draw_circle((left + padding, top_margin / 2), font_size * 0.15, color=None, fill=navy)
+		target.insert_text((x, y), label, fontname="hebo", fontsize=font_size, color=navy)
 		page.merge_page(PdfReader(BytesIO(overlay.tobytes())).pages[0])

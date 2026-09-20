@@ -252,7 +252,7 @@ def prepare_printcard_source(source):
 	writer = PdfWriter()
 	writer.add_page(first)
 	writer.add_outline_item(PAGE_GROUPS[0][0], 0)
-	page_labels = [None]
+	page_labels = [PAGE_GROUPS[0][0]]
 	for label, selected in PAGE_GROUPS[1:]:
 		if not separator.names & selected:
 			continue

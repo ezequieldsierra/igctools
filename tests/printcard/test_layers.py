@@ -187,7 +187,7 @@ def test_layered_annotations_are_rejected_instead_of_silently_lost(tmp_path):
 
 
 def test_layer_pages_pass_through_existing_canvas_and_signature(tmp_path):
-	source, pc, _cv = pdf_fixture(tmp_path, "Landscape")
+	source, pc, cv = pdf_fixture(tmp_path, "Landscape")
 	layer_fixture(source)
 	digest = hashlib.sha256(source.read_bytes()).digest()
 	helper = NEW["helper.py"]
@@ -196,7 +196,13 @@ def test_layer_pages_pass_through_existing_canvas_and_signature(tmp_path):
 	with fitz.open(source.parent / "layer-card.pdf") as pdf:
 		assert len(pdf) == 5
 		assert all("PRINTCARD ACME" in p.get_text() for p in pdf)
-		assert [len(p.get_drawings()) for p in pdf] == [3, 2, 2, 2, 2]
+		assert [len([d for d in p.get_drawings() if d["rect"].y0 >= cv.margin_top * 72]) for p in pdf] == [
+			3,
+			2,
+			2,
+			2,
+			2,
+		]
 	image = Image.new("RGBA", (20, 10), (0, 0, 0, 255))
 	buffer = io.BytesIO()
 	image.save(buffer, format="PNG")
@@ -210,7 +216,7 @@ def test_layer_pages_pass_through_existing_canvas_and_signature(tmp_path):
 		assert all(
 			label in pdf[index].get_text()
 			for index, label in enumerate(
-				["TROQUEL & DIMENSIONES", "RELIEVE", "BARNIZ BRILLO", "BARNIZ MATTE"], start=1
+				["ARTE & TROQUEL", "TROQUEL & DIMENSIONES", "RELIEVE", "BARNIZ BRILLO", "BARNIZ MATTE"]
 			)
 		)
 	assert pc.archivo == "/files/original.pdf"
