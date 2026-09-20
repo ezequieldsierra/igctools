@@ -8,7 +8,14 @@ from conftest import NEW
 from test_layers import layer_fixture
 from test_pdf import pdf_fixture
 
-EXPECTED = [None, "TROQUEL & DIMENSIONES", "RELIEVE", "ESTAMPADO", "BARNIZ BRILLO", "BARNIZ MATTE"]
+EXPECTED = [
+	"ARTE & TROQUEL",
+	"TROQUEL & DIMENSIONES",
+	"RELIEVE",
+	"ESTAMPADO",
+	"BARNIZ BRILLO",
+	"BARNIZ MATTE",
+]
 
 
 def output(helper, pc):
@@ -44,15 +51,20 @@ def test_labels_fit_all_canvas_margins_and_leave_content_unchanged(tmp_path, wid
 		assert len(pdf) == len(old) == 6
 		for page, previous, label in zip(pdf, old, EXPECTED, strict=True):
 			assert page.rect == previous.rect == fitz.Rect(0, 0, width * 72, height * 72)
-			assert page.get_drawings() == previous.get_drawings()
-			if label:
-				assert page.get_text().splitlines()[-1] == label
-				bounds = page.search_for(label)[0]
-				assert 0 < bounds.y0 < bounds.y1 < cv.margin_top * 72
-				assert bounds.x1 == pytest.approx(width * 72 - cv.margin_right * 72, abs=0.01)
-				assert bounds.x0 > width * 72 / 2
-			else:
-				assert page.get_text() == previous.get_text()
+			old_drawings = previous.get_drawings()
+			drawings = page.get_drawings()
+			assert drawings[: len(old_drawings)] == old_drawings
+			decorations = drawings[len(old_drawings) :]
+			assert decorations
+			for drawing in decorations:
+				assert 0 < drawing["rect"].y0 < drawing["rect"].y1 < cv.margin_top * 72
+				assert drawing["rect"].x1 <= width * 72 - cv.margin_right * 72 + 0.01
+			assert page.get_text().splitlines()[-1] == label
+			bounds = page.search_for(label)[0]
+			assert 0 < bounds.y0 < bounds.y1 < cv.margin_top * 72
+			assert bounds.x1 < width * 72 - cv.margin_right * 72
+			assert bounds.x0 > width * 72 / 2
+			assert decorations[0]["rect"].contains(bounds)
 			# Exact pixels below the reserved label margin, including template and artwork.
 			clip = fitz.Rect(0, cv.margin_top * 72, page.rect.width, page.rect.height)
 			assert page.get_pixmap(clip=clip).samples == previous.get_pixmap(clip=clip).samples
@@ -69,6 +81,7 @@ def test_labels_follow_present_layers_instead_of_page_numbers(tmp_path, missing)
 			if label != ("TROQUEL & DIMENSIONES" if missing == "TROQUEL" else missing)
 		]
 		assert len(pdf) == len(expected) + 1
+		assert pdf[0].get_text().splitlines()[-1] == "ARTE & TROQUEL"
 		assert [page.get_text().splitlines()[-1] for page in list(pdf)[1:]] == expected
 
 
