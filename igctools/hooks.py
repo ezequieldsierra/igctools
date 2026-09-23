@@ -30,6 +30,15 @@ override_doctype_class = {  # nosemgrep: override-doctype-class
 _printcard_controller, override_whitelisted_methods, permission_query_conditions = _printcard_runtime_hooks()
 override_doctype_class.update(_printcard_controller)
 
+# Customer access narrows the existing approval-user and document permissions.
+has_permission = {}
+if _printcard_controller:
+	permission_query_conditions["PrintCard"] = [
+		permission_query_conditions["PrintCard"],
+		"igctools.printcard.portal_access.query_conditions",
+	]
+	has_permission["PrintCard"] = "igctools.printcard.portal_access.has_permission"
+
 before_migrate = ["igctools.printcard.migration.assert_source_compatibility"]
 after_migrate = ["igctools.printcard.migration.verify_activation"]
 
