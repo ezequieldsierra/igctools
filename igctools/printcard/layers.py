@@ -36,6 +36,7 @@ PAGE_REFERENCES = {
 KNOWN_LAYERS = frozenset().union(*(names for _, names in PAGE_GROUPS), {"DIMENSIONES"})
 PATH_PAINT = {b"S", b"s", b"f", b"F", b"f*", b"B", b"B*", b"b", b"b*"}
 TEXT_PAINT = {b"Tj", b"TJ", b"'", b'"'}
+PATH_BUILD = {b"m", b"l", b"c", b"v", b"y", b"h", b"re"}
 
 
 class LayerSeparationError(ValueError):
@@ -63,6 +64,65 @@ def _owner(properties, parent):
 	name = _name(properties.get("/Title") or properties.get("/Name"))
 	# All descendants of a production group belong to that group.
 	return parent if parent in KNOWN_LAYERS else name or parent
+
+
+def _isolate_hidden_calls(operations, hidden_names):
+	"""Paint Illustrator's independent hidden streams in the enclosing stream's entry state.
+
+	Marked-content boundaries do not save/restore PDF graphics state. In particular,
+	Illustrator may close PRESERVADO's clipping scope only at the start of the next
+	visible layer, after several /AltAI8 records. A q/Do/Q at those records inherits
+	that unrelated clip. Unwind to our entry checkpoint, paint the hidden Form, then
+	replay state without paint to resume the visible stream at precisely that point.
+	Keeping this local to each stream retains enclosing Form matrices and clips.
+	"""
+	if not hidden_names:
+		return operations
+	out, replay, frames = [([], b"q")], [], []
+	path_open, text_open, text_mode = False, False, 0
+	for operands, operator in operations:
+		if operator == b"Do" and operands[0] in hidden_names:
+			if text_open:
+				out.append(([], b"ET"))
+			# Paths are not part of q/Q state. Rebuild a pending path from replay below.
+			out.append(([], b"n"))
+			out.extend(([], b"Q") for _ in range(len(frames) + 1))
+			out.extend([([], b"q"), (operands, operator), ([], b"Q"), ([], b"q")])
+			out.extend(replay)
+			continue
+		out.append((operands, operator))
+		if operator == b"q":
+			frames.append((len(replay), text_mode))
+		elif operator == b"Q":
+			if not frames:
+				raise LayerSeparationError("El PDF contiene una restauración gráfica sin apertura.")
+			checkpoint, text_mode = frames.pop()
+			if not path_open and not text_open:
+				# Closed scopes have no effect on future state. Do not replay their artwork.
+				del replay[checkpoint:]
+				replay.append(([], b"n"))
+				continue
+		elif operator in PATH_BUILD:
+			path_open = True
+		elif operator in PATH_PAINT or operator == b"n":
+			path_open = False
+		elif operator == b"BT":
+			text_open = True
+		elif operator == b"ET":
+			text_open = False
+		elif operator == b"Tr":
+			text_mode = int(operands[0])
+		if operator in PATH_PAINT:
+			replay.append(([], b"n"))
+		elif operator in TEXT_PAINT:
+			# Keep text advances and text clipping, without painting text a second time.
+			mode = NumberObject(7 if text_mode >= 4 else 3)
+			replay.extend([([], b"q"), ([mode], b"Tr"), (operands, operator), ([], b"Q")])
+		elif operator not in (b"Do", b"sh", b"INLINE IMAGE"):
+			replay.append((operands, operator))
+	# Enclosing Forms/pages implicitly discard residual saves; contain them explicitly.
+	out.extend(([], b"Q") for _ in range(len(frames) + 1))
+	return out
 
 
 class _Separator:
@@ -112,6 +172,7 @@ class _Separator:
 		)
 		xobjects = DictionaryObject()
 		out_resources[NameObject("/XObject")] = xobjects
+		hidden_names = set()
 		operations, stack = [], [parent]
 		for operands, operator in self.operations(stream):
 			owner = stack[-1]
@@ -142,6 +203,7 @@ class _Separator:
 					while key in _object(resources.get("/XObject", {})):
 						key = NameObject(str(key) + "_")
 					xobjects[key] = form.flate_encode()
+					hidden_names.add(key)
 					operations.extend([([], b"q"), ([key], b"Do"), ([], b"Q")])
 				continue
 			if operator == b"EMC":
@@ -202,7 +264,7 @@ class _Separator:
 		if len(stack) != 1:
 			raise LayerSeparationError("El PDF contiene una capa sin cerrar.")
 		output = ContentStream(None, self.reader)
-		output.operations = operations
+		output.operations = _isolate_hidden_calls(operations, hidden_names)
 		return output, out_resources
 
 	def variant(self, selected):
