@@ -285,12 +285,31 @@ class _Separator:
 
 
 def _has_content(page):
+	"""Check painted coverage, not drawing commands inside unused soft masks.
+
+	The alpha channel also keeps white artwork, while clipping, zero opacity and
+	mask setup without paint stay empty. Probe bounded tiles at 144 dpi without
+	rasterizing or changing the vector page that is returned to the customer.
+	"""
 	writer = PdfWriter()
 	writer.add_page(page)
 	buffer = BytesIO()
 	writer.write(buffer)
 	with fitz.open(stream=buffer.getvalue(), filetype="pdf") as pdf:
-		return any(kind != "ignore-text" for kind, *_ in pdf[0].get_bboxlog())
+		visible = pdf[0].rect
+		display = pdf[0].get_displaylist(annots=False)
+		for y in range(0, int(visible.height) + 1, 512):
+			for x in range(0, int(visible.width) + 1, 512):
+				clip = fitz.Rect(x, y, x + 512, y + 512) & visible
+				if clip.is_empty:
+					continue
+				pixmap = display.get_pixmap(
+					matrix=fitz.Matrix(2, 2), colorspace=fitz.csGRAY, alpha=True, clip=clip
+				)
+				# Gray + alpha: any painted pixel is enough, regardless of its color.
+				if pixmap.samples[1::2].strip(b"\x00"):
+					return True
+	return False
 
 
 def prepare_printcard_source(source):
