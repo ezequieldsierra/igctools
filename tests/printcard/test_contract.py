@@ -43,6 +43,10 @@ def normalized(text):
 			return ast.Constant("".join(parts)), ast.Tuple(elts=values, ctx=ast.Load())
 
 		def visit_FunctionDef(self, node):
+			if node.name == "check_for_changes_on_usuarios_asignados":
+				# Intentional customer-assignment deferral, exercised separately in
+				# test_approval_assignments.py with portal access denied in drafts.
+				return None
 			if node.name in ["generate_pdf_for_printcard", "sign_pdf_with_base64", "get_printcard_list"]:
 				for argument in node.args.args:
 					argument.annotation = None
@@ -92,6 +96,9 @@ def normalized(text):
 			return self.generic_visit(node)
 
 		def visit_ImportFrom(self, node):
+			if node.module == "igctools.printcard.portal_access":
+				assert [name.name for name in node.names] == ["VISIBLE_STATES"]
+				return None
 			if node.module == "igctools.printcard.page_labels":
 				assert [name.name for name in node.names] == ["add_separation_label"]
 				return None

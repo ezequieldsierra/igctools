@@ -13,6 +13,7 @@ from igctools.printcard.helper import (
 	sign_pdf_with_base64,
 	generate_pdf_for_printcard,
 )
+from igctools.printcard.portal_access import VISIBLE_STATES
 
 
 class PrintCard(Document):
@@ -460,9 +461,9 @@ class PrintCard(Document):
 			sign_pdf_with_base64(printcard_id=self.name)
 
 	def check_for_changes_on_usuarios_asignados(self):
-		# we need to compare the current state of the list usuarios_asignados with the previous state
-		# to determine if we need to update the arte. We add as Assignees the users that are not in the previous state
-		# and remove the users that are not in the current state.
+		# Approvers can be selected before customers are allowed to read the card.
+		# Native ToDo assignment checks the recipient's read access, even when
+		# ignore_permissions=True. Defer customer ToDos until the card is visible.
 		db_doc = self.get_doc_before_save()
 
 		if not db_doc:
@@ -470,13 +471,32 @@ class PrintCard(Document):
 
 		current_users = {d.user for d in self.usuarios_asignados}
 		previous_users = {d.user for d in db_doc.usuarios_asignados}
+		all_users = current_users | previous_users
+		website_users = (
+			set(
+				frappe.get_all(
+					"User",
+					filters={"name": ["in", sorted(all_users)], "user_type": "Website User"},
+					pluck="name",
+				)
+			)
+			if all_users
+			else set()
+		)
 
 		users_to_add = current_users - previous_users
+		users_to_remove = previous_users - current_users
+		if self.estado in VISIBLE_STATES:
+			if db_doc.estado not in VISIBLE_STATES:
+				# The selection may be unchanged when the PrintCard is submitted.
+				users_to_add |= current_users & website_users
+		else:
+			users_to_add -= website_users
+			if db_doc.estado in VISIBLE_STATES:
+				users_to_remove |= previous_users & website_users
 
 		for user in users_to_add:
 			self.add_assignee_to_arte(user)
-
-		users_to_remove = previous_users - current_users
 
 		for user in users_to_remove:
 			self.remove_assignee_from_arte(user)
