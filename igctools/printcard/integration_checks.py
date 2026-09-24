@@ -267,8 +267,35 @@ class TestPrintCardIntegration(unittest.TestCase):
 		self.assertEqual(printcard_svg._pdf_file_bytes_from_printcard(pc), payload)
 		pc.estado = "Listo para Someter"
 		pc.save()
-		pc.estado = "Pendiente"
-		pc.save()
+		# Reproduce customer selection with document sharing disabled, as in production.
+		draft_user = frappe.get_doc(
+			doctype="User",
+			email="printcard-draft-qa@example.invalid",
+			first_name="Draft QA",
+			user_type="Website User",
+			send_welcome_email=0,
+		).insert()
+		sharing_disabled = frappe.db.get_single_value("System Settings", "disable_document_sharing")
+		frappe.db.set_single_value("System Settings", "disable_document_sharing", 1)
+		try:
+			pc.append("usuarios_asignados", {"user": draft_user.name})
+			pc.save()
+			assignment_filter = {
+				"reference_type": "PrintCard",
+				"reference_name": pc.name,
+				"allocated_to": draft_user.name,
+				"status": "Open",
+			}
+			self.assertFalse(pc.has_permission("read", user=draft_user.name))
+			self.assertEqual(frappe.db.count("ToDo", assignment_filter), 0)
+			pc.estado = "Pendiente"
+			pc.save()
+			self.assertTrue(pc.has_permission("read", user=draft_user.name))
+			self.assertEqual(frappe.db.count("ToDo", assignment_filter), 1)
+			pc.save()
+			self.assertEqual(frappe.db.count("ToDo", assignment_filter), 1)
+		finally:
+			frappe.db.set_single_value("System Settings", "disable_document_sharing", sharing_disabled)
 		pc.reload()
 		self.assertTrue(pc.printcard_file)
 		with self.subTest("SVG preview on save"):
