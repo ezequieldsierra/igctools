@@ -14,6 +14,8 @@ from PIL import Image
 from frappe import utils
 from frappe import log_error
 
+from igctools.printcard.signature_date import validate_signature_date
+
 
 def sign_pdf_with_base64(
 	pdf_path,
@@ -27,6 +29,7 @@ def sign_pdf_with_base64(
 	date_y_pos=1.5,
 	date_size=12,
 	date_color=(0, 0, 0),
+	signature_date=None,
 ) -> bool:
 	"""
 	Overlay a Base64-encoded signature onto a PDF with unique file handling.
@@ -42,10 +45,13 @@ def sign_pdf_with_base64(
 	    date_y_pos (float, optional): The y-coordinate position of the date relative to the signature. Defaults to 1.5.
 	    date_size (int, optional): The font size of the date text. Defaults to 12.
 	    date_color (tuple, optional): The color of the date text in RGB format. Defaults to (0, 0, 0).
+	    signature_date (str, optional): Verified original date when regenerating a signed PDF.
 	Returns:
 	    bool: True if the PDF was signed successfully, False otherwise.
 	"""
 
+	# Today is only the default for a first signature. Regeneration supplies the original date.
+	signed_on = validate_signature_date(signature_date if signature_date is not None else utils.today())
 	# Remove the "data:image/png;base64," prefix if it exists
 	if base64_signature.startswith("data:image"):
 		base64_signature = base64_signature.split(",")[1]
@@ -78,7 +84,7 @@ def sign_pdf_with_base64(
 
 			page.insert_text(
 				(x - (date_x_pos * 72), y + (height / date_y_pos)),
-				utils.today(),
+				signed_on,
 				fontsize=date_size,
 				color=date_color,
 			)

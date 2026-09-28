@@ -21,6 +21,7 @@ from frappe.utils import flt
 from igctools.printcard import pdf_manipulator as pdf_manager
 from igctools.printcard import signature_helper as signature_helper
 from igctools.printcard.file_safety import confined_file_path
+from igctools.printcard.signature_date import original_signature_date
 
 
 @frappe.whitelist()
@@ -251,6 +252,13 @@ def _sign_pdf_with_base64(printcard_id) -> bool:
 
 	# Get the signature from the PrintCard
 	signature = printcard.firma_cliente
+	# An existing signed PDF is the source of truth, including for older records
+	# without a dedicated approval-date field. Never substitute today on a read error.
+	signature_date = (
+		original_signature_date(get_file_path(printcard.printcard_file_signed))
+		if printcard.get("printcard_file_signed")
+		else None
+	)
 
 	# Get the file path of the PDF
 	ofilepath = get_file_path(printcard.archivo)
@@ -280,6 +288,7 @@ def _sign_pdf_with_base64(printcard_id) -> bool:
 		date_y_pos=canvas.date_y_position,
 		date_size=canvas.font_size,
 		date_color=convert_hex_to_rgb(canvas.date_font_color),
+		signature_date=signature_date,
 	)
 
 	if signed:

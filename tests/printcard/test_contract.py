@@ -43,6 +43,13 @@ def normalized(text):
 			return ast.Constant("".join(parts)), ast.Tuple(elts=values, ctx=ast.Load())
 
 		def visit_FunctionDef(self, node):
+			if node.name == "sign_pdf_with_base64" and node.args.args[-1].arg == "signature_date":
+				# Optional historical date is the only new low-level argument.
+				assert (
+					isinstance(node.args.defaults[-1], ast.Constant) and node.args.defaults[-1].value is None
+				)
+				node.args.args.pop()
+				node.args.defaults.pop()
 			if node.name == "check_for_changes_on_usuarios_asignados":
 				# Intentional customer-assignment deferral, exercised separately in
 				# test_approval_assignments.py with portal access denied in drafts.
@@ -62,6 +69,11 @@ def normalized(text):
 		def visit_Call(self, node):
 			node = self.generic_visit(node)
 			name = ast.unparse(node.func)
+			if name == "signature_helper.sign_pdf_with_base64":
+				for keyword in list(node.keywords):
+					if keyword.arg == "signature_date":
+						assert ast.unparse(keyword.value) == "signature_date"
+						node.keywords.remove(keyword)
 			if name == "prepare_printcard_source":
 				# Intentional separation behavior, covered in test_layers.py.
 				assert len(node.args) == 1 and ast.unparse(node.args[0]) == "pdf2_path"
@@ -75,6 +87,27 @@ def normalized(text):
 			if name == "confined_file_path":
 				assert len(node.args) == 2 and ast.unparse(node.args[1]) == "files_folder"
 				return node.args[0]
+			return node
+
+		def visit_Assign(self, node):
+			if len(node.targets) == 1 and ast.unparse(node.targets[0]) == "signed_on":
+				assert (
+					ast.unparse(node.value)
+					== "validate_signature_date(signature_date if signature_date is not None else utils.today())"
+				)
+				return None
+			if len(node.targets) == 1 and ast.unparse(node.targets[0]) == "signature_date":
+				assert (
+					ast.unparse(node.value)
+					== "original_signature_date(get_file_path(printcard.printcard_file_signed)) if printcard.get('printcard_file_signed') else None"
+				)
+				return None
+			return self.generic_visit(node)
+
+		def visit_Name(self, node):
+			if node.id == "signed_on" and isinstance(node.ctx, ast.Load):
+				# Date preservation/fail-closed behavior is covered by test_signature_date.py.
+				return ast.parse("utils.today()", mode="eval").body
 			return node
 
 		def visit_Expr(self, node):
@@ -96,6 +129,12 @@ def normalized(text):
 			return self.generic_visit(node)
 
 		def visit_ImportFrom(self, node):
+			if node.module == "igctools.printcard.signature_date":
+				assert [name.name for name in node.names] in (
+					["original_signature_date"],
+					["validate_signature_date"],
+				)
+				return None
 			if node.module == "igctools.printcard.portal_access":
 				assert [name.name for name in node.names] == ["VISIBLE_STATES"]
 				return None
