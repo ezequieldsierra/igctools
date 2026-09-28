@@ -56,7 +56,7 @@ def _backup(pc, paths, signed_on):
 
 
 @frappe.whitelist(methods=["POST"])
-def regenerate_printcard_preserving_signature(printcard_id: str, dry_run=1):
+def regenerate_printcard_preserving_signature(printcard_id: str, dry_run: int = 1):
 	"""Preview by default; rebuild one record without save hooks or approval changes.
 
 	Only System Managers may use this maintenance operation. Originals remain at
