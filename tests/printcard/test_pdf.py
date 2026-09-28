@@ -97,6 +97,9 @@ def test_pdf_and_signature_are_visually_identical_on_every_page(tmp_path, orient
 	frappe.session.user = "client@example.test"
 	for modules, label, path in [(LEGACY, "powerpro", outputs[0]), (NEW, "igctools", outputs[1])]:
 		pc.printcard_file = "/files/" + path.name
+		# Independent first-signature runs; the NEW path must not inherit the
+		# legacy run's existing signed file (historical-date preservation is tested separately).
+		pc.printcard_file_signed = None
 		with patch.object(modules["helper.py"], "get_unique_filename", return_value=label + "-signed.pdf"):
 			modules["helper.py"]._sign_pdf_with_base64(pc.name)
 		signed.append(tmp_path / "public" / pc.printcard_file_signed.lstrip("/"))
