@@ -65,6 +65,43 @@ def signature_image():
 	return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
+def test_displaced_historical_signature_date_is_recovered_from_signer_overlay(tmp_path):
+	unsigned = footer_pdf(tmp_path / "unsigned.pdf", [None, None])
+	signed = tmp_path / "signed.pdf"
+	assert NEW["signature_helper.py"].sign_pdf_with_base64(
+		str(unsigned),
+		signature_image(),
+		str(signed),
+		x=200,
+		y=20,
+		width=90,
+		height=30,
+		date_x_pos=160 / 72,
+		date_y_pos=2,
+		signature_date="2025-03-07",
+	)
+	assert original_signature_date(str(signed)) == "2025-03-07"
+
+
+def test_appended_date_without_signature_image_is_not_a_historical_signature(tmp_path):
+	path = tmp_path / "artwork-date.pdf"
+	with fitz.open(footer_pdf(tmp_path / "unsigned.pdf", [None])) as pdf:
+		pdf[0].insert_text((40, 60), "2025-03-07", fontsize=12, color=(0, 0, 0))
+		pdf.save(path)
+	with pytest.raises(ValueError, match="fecha de firma"):
+		original_signature_date(str(path))
+
+
+def test_appended_signature_and_footer_must_agree(tmp_path):
+	unsigned = footer_pdf(tmp_path / "unsigned.pdf", ["2025-03-08"])
+	signed = tmp_path / "signed.pdf"
+	assert NEW["signature_helper.py"].sign_pdf_with_base64(
+		str(unsigned), signature_image(), str(signed), signature_date="2025-03-07"
+	)
+	with pytest.raises(ValueError, match="fecha de firma"):
+		original_signature_date(str(signed))
+
+
 @pytest.fixture
 def existing_card(tmp_path, monkeypatch):
 	public = tmp_path / "public" / "files"

@@ -1,6 +1,9 @@
 # Regenerar PrintCards conservando la fecha original
 
-La fecha procede del texto junto a **FECHA / FIRMA** en el PDF firmado existente.
+La fecha procede de la pareja de contenido **imagen de firma + fecha** insertada
+por el firmador en el PDF existente. Esto permite reconocer fechas desplazadas
+en los canvas antiguos. Si el PDF consolidó sus flujos de contenido, se reconoce
+el texto junto a **FECHA / FIRMA**. Ambas fuentes deben coincidir si están presentes.
 No se infiere de `creation`, `modified`, de la fecha del arte ni de los metadatos PDF.
 Todas las páginas deben mostrar una misma fecha verificable. Un archivo ausente,
 una página sin fecha o fechas contradictorias dejan el registro pendiente.
