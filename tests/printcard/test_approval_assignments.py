@@ -91,7 +91,7 @@ def test_return_to_internal_state_removes_customer_assignment_only(state):
 	doc = card(state, "Pendiente", [CLIENT, STAFF], [CLIENT, STAFF])
 	doc.check_for_changes_on_usuarios_asignados()
 	assign._add.assert_not_called()
-	assign.remove.assert_called_once_with("PrintCard", "PC1", CLIENT, ignore_permissions=True)
+	assign.remove.assert_called_once_with("PrintCard", "PC1", CLIENT)
 	assert [row.user for row in doc.usuarios_asignados] == [CLIENT, STAFF]
 
 
@@ -100,7 +100,7 @@ def test_removed_customer_cleans_up_any_previous_assignment(state):
 	doc = card(state, state, [], [CLIENT])
 	doc.check_for_changes_on_usuarios_asignados()
 	assign._add.assert_not_called()
-	assign.remove.assert_called_once_with("PrintCard", "PC1", CLIENT, ignore_permissions=True)
+	assign.remove.assert_called_once_with("PrintCard", "PC1", CLIENT)
 
 
 @pytest.mark.parametrize("state", ["Aprobado", "Rechazado"])
@@ -117,3 +117,33 @@ def test_first_insert_keeps_existing_behavior():
 	doc.check_for_changes_on_usuarios_asignados()
 	assign._add.assert_not_called()
 	assign.remove.assert_not_called()
+
+
+def test_remove_supports_frappe_without_ignore_permissions_keyword(monkeypatch):
+	from igctools.printcard import controller
+
+	calls = []
+
+	def native_remove(doctype, name, assign_to):
+		calls.append((doctype, name, assign_to, frappe.flags.in_install))
+
+	monkeypatch.setattr(controller, "remove_assignee", native_remove)
+	doc = card("Listo para Someter", "Pendiente", [CLIENT], [CLIENT])
+	doc.check_for_changes_on_usuarios_asignados()
+	assert calls == [("PrintCard", "PC1", CLIENT, True)]
+	assert frappe.flags.in_install is False
+
+
+@pytest.mark.parametrize("method", ["add_assignee_to_arte", "remove_assignee_from_arte"])
+def test_assignment_failure_restores_install_flag(monkeypatch, method):
+	from igctools.printcard import controller
+
+	def failed(*args, **kwargs):
+		raise RuntimeError("assignment failed")
+
+	target = "assign_to" if method == "add_assignee_to_arte" else "remove_assignee"
+	monkeypatch.setattr(controller, target, failed)
+	doc = card("Pendiente", "Listo para Someter", [CLIENT], [CLIENT])
+	with pytest.raises(RuntimeError, match="assignment failed"):
+		getattr(doc, method)(CLIENT)
+	assert frappe.flags.in_install is False
