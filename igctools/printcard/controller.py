@@ -502,9 +502,10 @@ class PrintCard(Document):
 			self.remove_assignee_from_arte(user)
 
 	def add_assignee_to_arte(self, user: str):
-		if not frappe.flags.in_install:
-			frappe.flags.in_install = True
-
+		if frappe.flags.in_install:
+			return
+		frappe.flags.in_install = True
+		try:
 			assign_to(
 				{
 					"assign_to": [user],
@@ -514,29 +515,19 @@ class PrintCard(Document):
 				},
 				ignore_permissions=True,
 			)
-
+		finally:
 			frappe.flags.in_install = False
 
 	def remove_assignee_from_arte(self, user: str):
-		# remove_assignee(
-		#     {
-		#         "assign_to": [user],
-		#         "doctype": self.doctype,
-		#         "name": self.name,
-		#     },
-		#     ignore_permissions=True,
-		# )
-
-		if not frappe.flags.in_install:
-			frappe.flags.in_install = True
-
-			remove_assignee(
-				self.doctype,
-				self.name,
-				user,
-				ignore_permissions=True,
-			)
-
+		if frappe.flags.in_install:
+			return
+		frappe.flags.in_install = True
+		try:
+			# Frappe 15.121.0 does not accept ignore_permissions on remove().
+			# Keep its native document permission check; the caller already saved
+			# this PrintCard with the acting user's permissions.
+			remove_assignee(self.doctype, self.name, user)
+		finally:
 			frappe.flags.in_install = False
 
 	def _get_arte(self):
