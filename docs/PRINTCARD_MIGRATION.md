@@ -43,11 +43,17 @@ Para un PDF de **una página** en `archivo` con grupos de producción reconocibl
 | Orden | Contenido | Condición |
 | --- | --- | --- |
 | 1 | ARTE + TROQUEL + PRESERVADO | Siempre en el modo por capas |
-| 2 | TROQUEL + DIMENSIONES | Sólo si TROQUEL contiene elementos dibujados |
-| 3 | RELIEVE + TROQUEL | Sólo si RELIEVE contiene elementos dibujados |
-| 4 | ESTAMPADO | Sólo si contiene elementos dibujados |
-| 5 | BARNIZ BRILLO + TROQUEL | Sólo si BARNIZ BRILLO contiene elementos dibujados |
-| 6 | BARNIZ MATTE + TROQUEL | Sólo si BARNIZ MATTE contiene elementos dibujados |
+| 2 | ARTE RETIRO + TROQUEL | Sólo si ARTE RETIRO contiene elementos dibujados |
+| 3 | TROQUEL + DIMENSIONES | Sólo si TROQUEL contiene elementos dibujados |
+| 4 | RELIEVE + TROQUEL | Sólo si RELIEVE contiene elementos dibujados |
+| 5 | ESTAMPADO | Sólo si contiene elementos dibujados |
+| 6 | BARNIZ BRILLO + TROQUEL | Sólo si BARNIZ BRILLO contiene elementos dibujados |
+| 7 | BARNIZ MATTE + TROQUEL | Sólo si BARNIZ MATTE contiene elementos dibujados |
+
+ARTE RETIRO se reserva para la impresión interior. Su página lleva el badge
+`ARTE RETIRO & TROQUEL`; no incluye ARTE, PRESERVADO ni DIMENSIONES. La presencia
+de TROQUEL por sí sola no crea esta página. Una capa ausente, completamente
+transparente, recortada o vacía se omite; la tinta blanca sí cuenta como contenido.
 
 Las páginas ausentes se omiten y la numeración queda consecutiva. DIMENSIONES
 aparece únicamente en la hoja de TROQUEL. Las capas de referencia se dibujan
