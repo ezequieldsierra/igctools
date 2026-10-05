@@ -20,6 +20,7 @@ from pypdf.generic import (
 
 PAGE_GROUPS = (
 	("ARTE + TROQUEL + PRESERVADO", frozenset({"ARTE", "TROQUEL", "PRESERVADO"})),
+	("ARTE RETIRO", frozenset({"ARTE RETIRO"})),
 	("TROQUEL", frozenset({"TROQUEL"})),
 	("RELIEVE", frozenset({"RELIEVE"})),
 	("ESTAMPADO", frozenset({"ESTAMPADO"})),
@@ -28,6 +29,7 @@ PAGE_GROUPS = (
 )
 # Reference artwork never determines whether an optional page exists.
 PAGE_REFERENCES = {
+	"ARTE RETIRO": frozenset({"TROQUEL"}),
 	"TROQUEL": frozenset({"DIMENSIONES"}),
 	"RELIEVE": frozenset({"TROQUEL"}),
 	"BARNIZ BRILLO": frozenset({"TROQUEL"}),
