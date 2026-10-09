@@ -9,13 +9,14 @@ import re
 from io import BytesIO
 
 import fitz
-from pypdf import PageObject, PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.generic import (
 	ContentStream,
 	DecodedStreamObject,
 	DictionaryObject,
 	NameObject,
 	NumberObject,
+	RectangleObject,
 )
 
 PAGE_GROUPS = (
@@ -314,6 +315,30 @@ def _has_content(page):
 	return False
 
 
+def _back_reference(page):
+	"""Show the front die from behind; reverse artwork is already supplied readable.
+
+	Reflect around the original artboard, never the ink bounds or each panel.
+	Keep the reference's crop/trim boxes with it so asymmetric page boxes cannot
+	clip the reflected die. A rotated PDF needs the other native axis to remain
+	a left/right reflection in the displayed page.
+	"""
+	box = page.mediabox
+	if page.rotation % 180:
+		matrix = Transformation((1, 0, 0, -1, 0, float(box.bottom + box.top)))
+	else:
+		matrix = Transformation((-1, 0, 0, 1, float(box.left + box.right), 0))
+	page.add_transformation(matrix)
+	for name in ("/CropBox", "/TrimBox", "/BleedBox", "/ArtBox"):
+		if name in page:
+			bounds = page[name]
+			a, b = matrix.apply_on(bounds[:2]), matrix.apply_on(bounds[2:])
+			page[NameObject(name)] = RectangleObject(
+				(min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1]))
+			)
+	return page
+
+
 def prepare_printcard_source(source):
 	"""Return original pages or ordered vector separations, without writing source.
 
@@ -344,7 +369,12 @@ def prepare_printcard_source(source):
 			page_labels.append(label)
 			if references := PAGE_REFERENCES.get(label):
 				# Draw reference lines last so solid varnish fills cannot obscure them.
-				page.merge_page(separator.variant(references))
+				reference = separator.variant(references)
+				if label == "ARTE RETIRO":
+					# ARTE RETIRO is the readable back view, with its clipping mask
+					# already reversed. Only the front-side die needs a reflection.
+					reference = _back_reference(reference)
+				page.merge_page(reference)
 				label += " + " + " + ".join(sorted(references))
 			writer.add_page(page)
 			writer.add_outline_item(label, len(writer.pages) - 1)
