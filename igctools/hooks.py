@@ -42,6 +42,20 @@ if _printcard_controller:
 before_migrate = ["igctools.printcard.migration.assert_source_compatibility"]
 after_migrate = ["igctools.printcard.migration.verify_activation"]
 
+# Opt-in purchase monetary policy. Existing controllers and event handlers stay
+# in place; before_validate binds only the document currently being saved.
+from igctools.purchase_rounding.policy import PURCHASE_DOCTYPES as _purchase_rounding_doctypes
+
+for _purchase_doctype in _purchase_rounding_doctypes:
+	doc_events.setdefault(_purchase_doctype, {}).setdefault("before_validate", [])
+	doc_events[_purchase_doctype]["before_validate"].append("igctools.purchase_rounding.engine.bind")
+doc_events.setdefault("Currency", {}).setdefault("validate", []).append(
+	"igctools.purchase_rounding.policy.validate_currency"
+)
+doctype_js = {dt: "public/js/purchase_rounding.js" for dt in _purchase_rounding_doctypes}
+after_migrate.append("igctools.purchase_rounding.setup.install")
+after_install = ["igctools.purchase_rounding.setup.install"]
+
 # ------------------
 # Apps
 # ------------------
@@ -165,3 +179,4 @@ after_migrate = ["igctools.printcard.migration.verify_activation"]
 
 # ChatGPT script connector (inactive until configured).
 before_request = ["igctools.mcp_auth.before_request"]
+

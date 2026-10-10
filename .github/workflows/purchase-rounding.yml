@@ -1,0 +1,97 @@
+name: Purchase rounding
+on:
+  pull_request:
+    paths:
+      - 'igctools/purchase_rounding/**'
+      - 'igctools/public/js/purchase_rounding.js'
+      - 'igctools/hooks.py'
+      - 'tests/purchase_rounding/**'
+      - '.github/workflows/purchase-rounding.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: purchase-rounding-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  arithmetic-and-form:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/checkout@v4
+        with:
+          repository: frappe/frappe
+          ref: v15.122.0
+          path: .upstream-frappe
+          sparse-checkout: frappe/utils/data.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: frappe/erpnext
+          ref: v15.122.0
+          path: .upstream-erpnext
+          sparse-checkout: erpnext/controllers/taxes_and_totals.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Test unchanged native arithmetic and form races
+        run: |
+          mkdir -p /tmp/igc-upstream
+          cp .upstream-frappe/frappe/utils/data.py /tmp/igc-upstream/datapy122.py
+          cp .upstream-erpnext/erpnext/controllers/taxes_and_totals.py /tmp/igc-upstream/taxpy122.py
+          IGC_UPSTREAM_SOURCE=/tmp/igc-upstream python -m unittest discover -s tests/purchase_rounding -p 'test_native_arithmetic.py' -v
+          node --test tests/purchase_rounding/test_client.js
+  erpnext-integration:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    services:
+      redis-cache:
+        image: redis:alpine
+        ports: ['13000:6379']
+      redis-queue:
+        image: redis:alpine
+        ports: ['11000:6379']
+      mariadb:
+        image: mariadb:10.6
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports: ['3306:3306']
+        options: --health-cmd="mariadb-admin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install bench dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mariadb-client libcairo2-dev libffi-dev
+          pip install frappe-bench
+          npm install -g yarn
+          mariadb --host 127.0.0.1 --port 3306 -u root -proot -e "SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_unicode_ci';"
+      - name: Install exact ERPNext and Frappe versions on a disposable site
+        run: |
+          bench init --frappe-branch v15.122.0 --skip-redis-config-generation --skip-assets --python "$(which python)" ~/frappe-bench
+          cd ~/frappe-bench
+          bench get-app --branch v15.122.0 erpnext
+          bench get-app igctools "$GITHUB_WORKSPACE"
+          bench new-site --db-root-password root --admin-password admin test_site
+          bench --site test_site install-app erpnext
+          bench --site test_site install-app igctools
+          bench --site test_site set-config allow_tests true
+        env:
+          CI: 'Yes'
+      - name: Verify persistence, mapping and balanced ledger
+        working-directory: /home/runner/frappe-bench
+        run: bench --site test_site run-tests --module igctools.purchase_rounding.test_integration
+        env:
+          TYPE: server
