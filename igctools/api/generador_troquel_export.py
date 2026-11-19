@@ -663,7 +663,9 @@ def _technical_pdf_cmyk(rgb_pdf: bytes) -> bytes:
 			timeout=60,
 		)
 	except (OSError, subprocess.SubprocessError) as exc:
-		raise frappe.ValidationError(frappe._("No se pudo generar el PDF vectorial CMYK del troquel.")) from exc
+		raise frappe.ValidationError(
+			frappe._("No se pudo generar el PDF vectorial CMYK del troquel.")
+		) from exc
 	if not result.stdout.startswith(b"%PDF-"):
 		raise frappe.ValidationError(frappe._("El convertidor no devolvió un PDF CMYK válido."))
 	return result.stdout
