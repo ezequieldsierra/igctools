@@ -45,7 +45,9 @@ class TestExports(unittest.TestCase):
 			self.assertAlmostEqual(pdf[0].rect.width, 100 * 72 / 25.4, places=2)
 			self.assertAlmostEqual(pdf[0].rect.height, 50 * 72 / 25.4, places=2)
 			drawings = pdf[0].get_drawings()
-			self.assertTrue(any(drawing["color"] == (1.0, 0.0, 0.0) for drawing in drawings))
+			operators = pdf[0].read_contents()
+			self.assertRegex(operators, rb"\b0\s+1\s+1\s+0\s+K\b")
+			self.assertNotRegex(operators, rb"\b(?:rg|RG)\b")
 			self.assertTrue(any(item[0] == "c" for drawing in drawings for item in drawing["items"]))
 
 	def test_dxf_preserves_millimetres_and_cut_geometry(self):
