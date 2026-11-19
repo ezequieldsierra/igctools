@@ -1814,4 +1814,3 @@ def export_hoja_de_arreglo_pdf(
 	# Preserve the export API contract: the new File is persisted before its download URL is returned.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
-
