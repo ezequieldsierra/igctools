@@ -651,6 +651,10 @@ def _technical_pdf_cmyk(rgb_pdf: bytes) -> bytes:
 				"-dDownsampleGrayImages=false",
 				"-dDownsampleMonoImages=false",
 				"-sOutputFile=-",
+				# Transfer the common CMY component into K, including neutral dimension lines.
+				"-c",
+				"{} setblackgeneration {} setundercolorremoval",
+				"-f",
 				"-",
 			],
 			input=rgb_pdf,
@@ -1808,3 +1812,4 @@ def export_hoja_de_arreglo_pdf(
 	# Preserve the export API contract: the new File is persisted before its download URL is returned.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 	return {"file_url": filedoc.file_url, "file_name": filedoc.file_name}
+
