@@ -1,5 +1,6 @@
 import math
 import re
+import subprocess
 from io import BytesIO, StringIO
 
 import cairosvg
@@ -629,6 +630,47 @@ def _mid_is_on_ccw(a1, a2, amid):
 	return dm <= d + 1e-9
 
 
+def _technical_pdf_cmyk(rgb_pdf: bytes) -> bytes:
+	"""Convert Cairo's vector PDF to device CMYK before any File is created."""
+	try:
+		result = subprocess.run(
+			[
+				"gs",
+				"-q",
+				"-dSAFER",
+				"-dBATCH",
+				"-dNOPAUSE",
+				"-dPDFSTOPONERROR",
+				"-sDEVICE=pdfwrite",
+				"-dCompatibilityLevel=1.6",
+				"-dAutoRotatePages=/None",
+				"-r2400",
+				"-sColorConversionStrategy=CMYK",
+				"-dUseFastColor=true",
+				"-dDownsampleColorImages=false",
+				"-dDownsampleGrayImages=false",
+				"-dDownsampleMonoImages=false",
+				"-sOutputFile=-",
+				# Transfer the common CMY component into K, including neutral dimension lines.
+				"-c",
+				"{} setblackgeneration {} setundercolorremoval",
+				"-f",
+				"-",
+			],
+			input=rgb_pdf,
+			capture_output=True,
+			check=True,
+			timeout=60,
+		)
+	except (OSError, subprocess.SubprocessError) as exc:
+		raise frappe.ValidationError(
+			frappe._("No se pudo generar el PDF vectorial CMYK del troquel.")
+		) from exc
+	if not result.stdout.startswith(b"%PDF-"):
+		raise frappe.ValidationError(frappe._("El convertidor no devolvió un PDF CMYK válido."))
+	return result.stdout
+
+
 @frappe.whitelist(methods=["POST"])
 def export_generador_troquel_pdf(
 	docname: str,
@@ -655,7 +697,7 @@ def export_generador_troquel_pdf(
 		dpi=96,
 		background_color="white",
 	)
-	pdf_bytes = buf.getvalue()
+	pdf_bytes = _technical_pdf_cmyk(buf.getvalue())
 	buf.close()
 
 	if not filename:
